@@ -1,0 +1,91 @@
+# Build results
+bin/
+obj/
+*.dll
+*.exe
+*.pdb
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Visual Studio cache/options
+.vs/
+.vscode/
+
+# macOS
+.DS_Store
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+
+# Build directories
+Debug/
+Release/
+x64/
+x86/
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+*.code-workspace
+
+# OS
+Thumbs.db
+.DS_Store
+
+# NuGet user configuration
+.nuget/NuGet.config
+
+# Package directories
+packages/
+
+# MAUI specific
+.gradle/
+local.properties
+
+# Android
+.android/
+.gradle/
+**/bin/
+**/obj/
+
+# iOS
+*.ipa
+
+# Windows
+*.exe
+*.cab
+
+# Rider
+.idea/
+.idea/**
+*.sln.iml
+riderModule.iml
+
+# .NET Core
+*.prof
+
+# Visual Studio
+.vs/
+.vscode/
+
+# User-specific files
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Local Environment files
+.env
+.env.local
+
+# Test/Output directories
+calander-parse-test-imgs/**/*.output.json
+calander-parse-test-imgs/**/*.debug.txt
+calander-parse-test-imgs/

@@ -1,0 +1,78 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+
+  <!-- Background -->
+  <rect width="512" height="512" rx="110" fill="#0052CC"/>
+
+  <!-- Calendar body -->
+  <rect x="68" y="112" width="304" height="292" rx="18" fill="white"/>
+
+  <!-- Header (rounded top, flat bottom) -->
+  <rect x="68" y="112" width="304" height="70" rx="18" fill="#0EA5E9"/>
+  <rect x="68" y="150" width="304" height="32" fill="#0EA5E9"/>
+
+  <!-- Binding tabs -->
+  <rect x="138" y="91" width="34" height="42" rx="10" fill="#003A99"/>
+  <rect x="278" y="91" width="34" height="42" rx="10" fill="#003A99"/>
+
+  <!-- Month label bar -->
+  <rect x="148" y="133" width="156" height="14" rx="5" fill="white" fill-opacity="0.85"/>
+
+  <!-- Vertical grid lines -->
+  <line x1="150" y1="182" x2="150" y2="384" stroke="#E0E8FF" stroke-width="2"/>
+  <line x1="230" y1="182" x2="230" y2="384" stroke="#E0E8FF" stroke-width="2"/>
+  <line x1="310" y1="182" x2="310" y2="384" stroke="#E0E8FF" stroke-width="2"/>
+
+  <!-- Horizontal grid lines -->
+  <line x1="88" y1="240" x2="352" y2="240" stroke="#E0E8FF" stroke-width="2"/>
+  <line x1="88" y1="298" x2="352" y2="298" stroke="#E0E8FF" stroke-width="2"/>
+  <line x1="88" y1="356" x2="352" y2="356" stroke="#E0E8FF" stroke-width="2"/>
+
+  <!-- Header row tint -->
+  <rect x="88" y="182" width="62" height="58" fill="#EBF5FF"/>
+  <rect x="150" y="182" width="80" height="58" fill="#EBF5FF"/>
+  <rect x="230" y="182" width="80" height="58" fill="#EBF5FF"/>
+  <rect x="310" y="182" width="42" height="58" fill="#EBF5FF"/>
+
+  <!-- Day header label bars -->
+  <rect x="162" y="205" width="56" height="10" rx="3" fill="#93C5FD"/>
+  <rect x="242" y="205" width="56" height="10" rx="3" fill="#93C5FD"/>
+  <rect x="320" y="205" width="24" height="10" rx="3" fill="#93C5FD"/>
+
+  <!-- Employee name bars (rows 1–3) -->
+  <rect x="93" y="254" width="48" height="9" rx="3" fill="#BFCCEA"/>
+  <rect x="93" y="266" width="36" height="9" rx="3" fill="#BFCCEA"/>
+  <rect x="93" y="312" width="50" height="9" rx="3" fill="#BFCCEA"/>
+  <rect x="93" y="324" width="38" height="9" rx="3" fill="#BFCCEA"/>
+  <rect x="93" y="368" width="44" height="9" rx="3" fill="#BFCCEA"/>
+
+  <!-- Shift cells – row 1 -->
+  <rect x="153" y="243" width="74" height="52" rx="7" fill="#0EA5E9" fill-opacity="0.85"/>
+  <rect x="313" y="243" width="36" height="52" rx="5" fill="#4ADE80" fill-opacity="0.80"/>
+
+  <!-- Shift cells – row 2 -->
+  <rect x="153" y="301" width="74" height="52" rx="7" fill="#4ADE80" fill-opacity="0.80"/>
+  <rect x="233" y="301" width="74" height="52" rx="7" fill="#FB923C" fill-opacity="0.85"/>
+
+  <!-- Shift cells – row 3 (clipped near bottom) -->
+  <rect x="233" y="359" width="74" height="28" rx="5" fill="#0EA5E9" fill-opacity="0.70"/>
+
+  <!-- Scan / capture viewfinder (extends into right margin) -->
+  <rect x="303" y="283" width="136" height="126" rx="4" fill="#001A66" fill-opacity="0.20"/>
+
+  <!-- Bracket: top-left -->
+  <path d="M303 311 L303 283 L331 283" stroke="#00D4FF" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <!-- Bracket: top-right -->
+  <path d="M439 311 L439 283 L411 283" stroke="#00D4FF" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <!-- Bracket: bottom-left -->
+  <path d="M303 381 L303 409 L331 409" stroke="#00D4FF" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <!-- Bracket: bottom-right -->
+  <path d="M439 381 L439 409 L411 409" stroke="#00D4FF" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+  <!-- Scan line -->
+  <line x1="311" y1="346" x2="431" y2="346" stroke="#00D4FF" stroke-width="4" stroke-dasharray="12 7"/>
+
+  <!-- Focus ring -->
+  <circle cx="371" cy="346" r="15" stroke="#00D4FF" stroke-width="4" fill="none"/>
+  <circle cx="371" cy="346" r="5" fill="#00D4FF"/>
+
+</svg>

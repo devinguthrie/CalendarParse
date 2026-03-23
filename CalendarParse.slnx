@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="CalendarParse/CalendarParse.csproj" />
+  <Project Path="CalendarParse.Core/CalendarParse.Core.csproj" />
+  <Project Path="CalendarParse.Cli/CalendarParse.Cli.csproj" />
+</Solution>
