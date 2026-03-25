@@ -1,8 +1,12 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using CalendarParse.Cli.Services;
 using CalendarParse.Models;
 using CalendarParse.Services;
+
+Console.OutputEncoding = Encoding.UTF8;
+Console.InputEncoding  = Encoding.UTF8;
 
 // ── Argument parsing ──────────────────────────────────────────────────────────
 if (args.Length == 0 || args[0] is "-h" or "--help")
@@ -15,6 +19,7 @@ string folder = args[0];
 string nameFilter    = string.Empty;
 bool   testMode      = false;
 bool   visionMode    = false;
+bool   hybridMode    = false;
 bool   debugMode     = false;
 bool   halvesMode    = false;
 int    resizeWidth   = 0;
@@ -31,6 +36,8 @@ for (int i = 1; i < args.Length; i++)
         testMode = true;
     else if (args[i] is "--vision" or "-V")
         visionMode = true;
+    else if (args[i] is "--hybrid")
+        hybridMode = true;
     else if (args[i] is "--debug" or "-d")
         debugMode = true;
     else if (args[i] is "--model" && i + 1 < args.Length)
@@ -70,15 +77,25 @@ WindowsTableDetector?     tableDetectorInst = null;
 WindowsOcrService?        ocrServiceInst    = null;
 CalendarStructureAnalyzer? analyzerInst     = null;
 
-if (visionMode)
+string[] knownNamesArr = string.IsNullOrEmpty(knownNamesArg)
+    ? Array.Empty<string>()
+    : knownNamesArg.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+if (hybridMode)
 {
-    string[] knownNames = string.IsNullOrEmpty(knownNamesArg)
-        ? Array.Empty<string>()
-        : knownNamesArg.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-    parser = new OllamaCalendarService(model: ollamaModel, knownNames: knownNames.Length > 0 ? knownNames : null);
+    parser = new HybridCalendarService(
+        model:      ollamaModel,
+        knownNames: knownNamesArr.Length > 0 ? knownNamesArr : null);
+    Console.WriteLine($"Mode: HYBRID (Ollama model: {ollamaModel} + WinRT OCR + grid crop)");
+    if (knownNamesArr.Length > 0)
+        Console.WriteLine($"Known names: {string.Join(", ", knownNamesArr)}");
+}
+else if (visionMode)
+{
+    parser = new OllamaCalendarService(model: ollamaModel, knownNames: knownNamesArr.Length > 0 ? knownNamesArr : null);
     Console.WriteLine($"Mode: VISION (Ollama model: {ollamaModel})");
-    if (knownNames.Length > 0)
-        Console.WriteLine($"Known names: {string.Join(", ", knownNames)}");
+    if (knownNamesArr.Length > 0)
+        Console.WriteLine($"Known names: {string.Join(", ", knownNamesArr)}");
     if (!string.IsNullOrEmpty(ensembleModel))
         Console.WriteLine($"Ensemble: {ensembleModel} (blank-fill pass)");
 }

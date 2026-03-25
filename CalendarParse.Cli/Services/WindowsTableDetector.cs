@@ -36,6 +36,16 @@ namespace CalendarParse.Cli.Services
             int rows = src.Rows;
             int cols = src.Cols;
 
+            // ── Binarize: dark grid lines → white, background → black ─────────
+            // Slight blur first to reduce noise from phone-photo images.
+            // BinaryInv: dark pixels (lines/borders) → 255, light background → 0.
+            var blurred = new Mat();
+            CvInvoke.GaussianBlur(src, blurred, new System.Drawing.Size(3, 3), 0);
+            var binary = new Mat();
+            CvInvoke.AdaptiveThreshold(blurred, binary, 255,
+                AdaptiveThresholdType.GaussianC, ThresholdType.BinaryInv, 15, 2);
+            blurred.Dispose();
+
             // ── Horizontal lines ─────────────────────────────────────────────
             int hLen = Math.Max(cols / 25, 15);
             var hKernel = CvInvoke.GetStructuringElement(
@@ -43,10 +53,10 @@ namespace CalendarParse.Cli.Services
                 new System.Drawing.Size(hLen, 1),
                 new System.Drawing.Point(-1, -1));
             var horizontal = new Mat();
-            CvInvoke.MorphologyEx(src, horizontal, MorphOp.Erode, hKernel,
-                new System.Drawing.Point(-1, -1), 3, BorderType.Default, new MCvScalar(0));
+            CvInvoke.MorphologyEx(binary, horizontal, MorphOp.Erode, hKernel,
+                new System.Drawing.Point(-1, -1), 1, BorderType.Default, new MCvScalar(0));
             CvInvoke.MorphologyEx(horizontal, horizontal, MorphOp.Dilate, hKernel,
-                new System.Drawing.Point(-1, -1), 3, BorderType.Default, new MCvScalar(0));
+                new System.Drawing.Point(-1, -1), 1, BorderType.Default, new MCvScalar(0));
 
             // ── Vertical lines ────────────────────────────────────────────────
             int vLen = Math.Max(rows / 25, 15);
@@ -55,10 +65,20 @@ namespace CalendarParse.Cli.Services
                 new System.Drawing.Size(1, vLen),
                 new System.Drawing.Point(-1, -1));
             var vertical = new Mat();
-            CvInvoke.MorphologyEx(src, vertical, MorphOp.Erode, vKernel,
-                new System.Drawing.Point(-1, -1), 3, BorderType.Default, new MCvScalar(0));
+            CvInvoke.MorphologyEx(binary, vertical, MorphOp.Erode, vKernel,
+                new System.Drawing.Point(-1, -1), 1, BorderType.Default, new MCvScalar(0));
             CvInvoke.MorphologyEx(vertical, vertical, MorphOp.Dilate, vKernel,
-                new System.Drawing.Point(-1, -1), 3, BorderType.Default, new MCvScalar(0));
+                new System.Drawing.Point(-1, -1), 1, BorderType.Default, new MCvScalar(0));
+
+            // ── Diagnostics ───────────────────────────────────────────────────
+            {
+                int binaryNz = CvInvoke.CountNonZero(binary);
+                int hNz      = CvInvoke.CountNonZero(horizontal);
+                int vNz      = CvInvoke.CountNonZero(vertical);
+                Console.Error.WriteLine(
+                    $"      [grid-diag] img={cols}×{rows}  hLen={hLen}  vLen={vLen}" +
+                    $"  binary_nz={binaryNz}  h_nz={hNz}  v_nz={vNz}");
+            }
 
             // ── Capture masks as PNG bytes for debug output ───────────────────
             var hBuf = new VectorOfByte();
@@ -105,7 +125,7 @@ namespace CalendarParse.Cli.Services
                 });
             }
 
-            src.Dispose(); horizontal.Dispose(); vertical.Dispose();
+            src.Dispose(); binary.Dispose(); horizontal.Dispose(); vertical.Dispose();
             grid.Dispose(); inverted.Dispose(); closeKernel.Dispose();
             hKernel.Dispose(); vKernel.Dispose(); hierarchy.Dispose();
 

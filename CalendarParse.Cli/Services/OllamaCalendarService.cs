@@ -18,12 +18,12 @@ public class OllamaCalendarService : ICalendarParseService
 
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(600) };
 
-    private static readonly Regex OcrGarbagePattern =
+    internal static readonly Regex OcrGarbagePattern =
         new(@"^\d+\.?\d*\s+\w", RegexOptions.Compiled);
 
     private readonly string _baseUrl;
     private readonly string _model;
-    private readonly IReadOnlyList<string> _knownNames;
+    internal readonly IReadOnlyList<string> _knownNames;
 
     public OllamaCalendarService(string baseUrl = DefaultBaseUrl, string model = DefaultModel, IEnumerable<string>? knownNames = null)
     {
@@ -317,7 +317,7 @@ public class OllamaCalendarService : ICalendarParseService
 
     // ── Header extraction ──────────────────────────────────────────────────────
 
-    private async Task<(string month, int year, List<string> isoDates)> ExtractHeaderAsync(
+    internal async Task<(string month, int year, List<string> isoDates)> ExtractHeaderAsync(
         string base64Image, CancellationToken ct)
     {
         const string prompt =
@@ -349,7 +349,7 @@ public class OllamaCalendarService : ICalendarParseService
 
     // ── Names extraction ──────────────────────────────────────────────────────
 
-    private async Task<List<string>> ExtractNamesAsync(string base64Image, CancellationToken ct)
+    internal async Task<List<string>> ExtractNamesAsync(string base64Image, CancellationToken ct)
     {
         // P10: include known names hint so the model uses exact reference spellings
         string prompt =
@@ -378,7 +378,7 @@ public class OllamaCalendarService : ICalendarParseService
 
     // ── X-marks binary extraction ─────────────────────────────────────────────
 
-    private async Task<Dictionary<string, HashSet<string>>> ExtractXMarksAsync(
+    internal async Task<Dictionary<string, HashSet<string>>> ExtractXMarksAsync(
         string base64Image, List<string> names, CancellationToken ct)
     {
         string nameList = string.Join(", ", names.Select(n => $"\"{n}\""));
@@ -651,7 +651,11 @@ public class OllamaCalendarService : ICalendarParseService
             $"- Include ALL employees. Use exactly these day-name keys: {dayKeyList}.\n" +
             // P11: warn about blank/holiday columns to prevent WRONG-COL drift
             "- IMPORTANT: Any date column may be entirely blank for ALL employees (e.g., a public holiday). " +
-            "If every employee in a column has no shift, output \"\" for all of them — do NOT redistribute values from an adjacent column to fill a blank column.";
+            "If every employee in a column has no shift, output \"\" for all of them — do NOT redistribute values from an adjacent column to fill a blank column.\n" +
+            // P20: negative anti-WRONG-COL warning — explicitly forbid the right-shift error pattern
+            "- CRITICAL: Do NOT shift values one column to the right. Each cell value belongs ONLY in the column " +
+            "whose header is directly above that cell. If you read a value from the Mon column, it must be stored " +
+            "under the \"Mon\" key — never under \"Tue\" or any other key. Read each column header and its cells independently.";
 
         // num_predict: employees × 7 day-value pairs × ~30 chars avg + JSON overhead
         int predictBudget = Math.Max(3000, names.Count * 7 * 30 + 800);
@@ -693,6 +697,249 @@ public class OllamaCalendarService : ICalendarParseService
         catch
         {
             // Return empty — caller will fall back to per-employee
+        }
+        return result;
+    }
+
+    // ── CSV-format row extraction (Phase 41 experiment) ──────────────────────
+    // Uses image-visible date headers as CSV column keys instead of abstract day names.
+    // Structural advantage: column count is verifiable; wrong-count rows can be flagged.
+
+    private async Task<Dictionary<string, List<object>>> ExtractAllShiftsCsvAsync(
+        string base64Image, List<string> names, List<string> dates, CancellationToken ct)
+    {
+        string nameList = string.Join(", ", names.Select(n => $"\"{n}\""));
+        string lastEmployee = names.Count > 0 ? names[^1] : "the last employee";
+
+        // Build date label strings to use as CSV column headers (e.g. "10/26", "10/27", ...)
+        // These match what the model can visually read in the image header row.
+        var dateLabels = new List<string>();
+        for (int i = 0; i < 7; i++)
+        {
+            if (i < dates.Count)
+            {
+                string nd = NormalizeIsoDate(dates[i]);
+                dateLabels.Add(nd.Length >= 5 ? nd[5..].Replace("-", "/") : $"Day{i + 1}");
+            }
+            else dateLabels.Add($"Day{i + 1}");
+        }
+        string csvHeader = "Employee," + string.Join(",", dateLabels);
+        string csvExample = "<EmployeeName>," + string.Join(",", Enumerable.Repeat("<value>", 7));
+
+        string prompt =
+            "Look at this work schedule image.\n" +
+            $"Extract shift values for these {names.Count} employees: {nameList}.\n" +
+            "For each employee, find their row in the main scheduling table and read each day column carefully.\n" +
+            $"The main table ends at the row labeled \"{lastEmployee}\" — do NOT read the secondary table below it.\n" +
+            "Each cell shows one of: a time range (e.g. 9:00-5:30), RTO, PTO, x (day off), or is blank.\n" +
+            "Each cell also shows an hours number — IGNORE the number, only report the shift label.\n" +
+            "X marks may be printed in RED ink or any other color — treat ANY X or checkmark as \"x\".\n" +
+            "\"x\" = day off (X mark present). Empty string = completely blank cell (no value, no mark).\n" +
+            "Reply with ONLY a plain CSV table (no markdown, no explanation, no quotes around values).\n" +
+            "First line must be exactly this header:\n" +
+            csvHeader + "\n" +
+            "Then one data row per employee:\n" +
+            csvExample + "\n" +
+            "Rules:\n" +
+            "- CRITICAL: Do NOT shift values one column to the right. Each cell value belongs ONLY in the " +
+            "column whose header date is directly above that cell in the image. Read each column header and " +
+            "its cells independently.\n" +
+            "- Blank cell = leave empty between the commas (two consecutive commas ,, or trailing comma for last column).\n" +
+            "- Copy time ranges exactly as written (e.g. 9:00-5:30, 10:00-6:30, 12:00-4:30).\n" +
+            "- Do NOT include hours numbers in values. Do NOT omit any employee or any day.\n" +
+            $"- Include ALL {names.Count} employees, one row each.\n" +
+            "- IMPORTANT: Any date column may be entirely blank for ALL employees (e.g., a public holiday). " +
+            "Output empty for all of them — do NOT redistribute values from an adjacent column to fill it.";
+
+        int predictBudget = Math.Max(2500, names.Count * 7 * 15 + 500);
+        string raw = await CallOllamaAsync(base64Image, prompt, ct, isJson: false, numPredict: predictBudget);
+
+        var result = new Dictionary<string, List<object>>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            var lines = raw.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            foreach (var line in lines)
+            {
+                // Skip header row and any preamble lines (must contain at least one comma)
+                int commaCount = line.Count(c => c == ',');
+                if (commaCount == 0) continue;
+
+                var parts = line.Split(',');
+                string empName = parts[0].Trim().Trim('"').Trim();
+                if (string.IsNullOrEmpty(empName)) continue;
+
+                // Skip if first token looks like the CSV header
+                if (empName.Equals("Employee", StringComparison.OrdinalIgnoreCase)) continue;
+                // Skip if first token looks like a date label (e.g. "10/26")
+                if (Regex.IsMatch(empName, @"^\d+/\d+")) continue;
+
+                var shifts = new List<object>();
+                for (int i = 0; i < 7; i++)
+                {
+                    string date  = i < dates.Count ? NormalizeIsoDate(dates[i]) : "";
+                    string shift = i + 1 < parts.Length ? parts[i + 1].Trim().Trim('"').Trim() : "";
+                    shift = Regex.Replace(shift, @"\s+\d+(\.\d+)?$", "").Trim();
+                    if (Regex.IsMatch(shift, @"^\d+\.?\d*$")) shift = "";
+                    shifts.Add(new { Date = date, Shift = shift });
+                }
+                result[empName] = shifts;
+            }
+        }
+        catch
+        {
+            // Return empty — caller will fall back to per-employee
+        }
+        return result;
+    }
+
+    // ── Dual-view cross-reference extraction (Phase 42) ─────────────────────
+    // Asks for BOTH a per-employee row view AND a per-day column view in ONE call.
+    // Cells where both views agree → high-confidence value.
+    // Cells where both views produce different non-empty values → "" (unresolvable,
+    //   let the other 5 majority-vote runs determine it).
+    // Cells where only one view has a value → use that value.
+    // This result is added as a 6th run (5 existing + 1 dual) to the majority vote.
+
+    private async Task<Dictionary<string, List<object>>> ExtractAllShiftsDualAsync(
+        string base64Image, List<string> names, List<string> dates, CancellationToken ct)
+    {
+        string nameList = string.Join(", ", names.Select(n => $"\"{n}\""));
+        string lastEmployee = names.Count > 0 ? names[^1] : "the last employee";
+
+        var dayNames = new[] { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+        string dayStr = string.Join(", ", dayNames.Select((d, i) =>
+        {
+            if (i >= dates.Count) return d;
+            string nd = NormalizeIsoDate(dates[i]);
+            return nd.Length >= 5 ? $"{d} ({nd[5..].Replace("-", "/")})" : d;
+        }));
+        string dayKeyList = string.Join(", ", dayNames.Select(k => $"\"{k}\""));
+
+        string prompt =
+            "Look at this work schedule image.\n" +
+            $"Extract shift values for these {names.Count} employees: {nameList}.\n" +
+            $"The main table ends at the row labeled \"{lastEmployee}\" — do NOT read the secondary table below it.\n" +
+            $"The 7 day columns are: {dayStr}.\n" +
+            "Each cell shows one of: a time range (e.g. 9:00-5:30), RTO, PTO, x (day off), or is blank.\n" +
+            "Ignore any hours number shown in a cell — only report the shift label.\n" +
+            "X marks may be printed in RED ink or any color — treat ANY X or checkmark as \"x\".\n" +
+            "\"x\" = day off. \"\" = completely blank cell with no value or mark.\n" +
+            "Reply with ONLY this JSON (no markdown, no explanation):\n" +
+            "{\n" +
+            "  \"by_employee\": {\n" +
+            "    \"<EmployeeName>\": {\"Sun\": \"<value>\", \"Mon\": \"<value>\", \"Tue\": \"<value>\", \"Wed\": \"<value>\", \"Thu\": \"<value>\", \"Fri\": \"<value>\", \"Sat\": \"<value>\"},\n" +
+            "    ...\n" +
+            "  },\n" +
+            "  \"by_day\": {\n" +
+            "    \"Sun\": {\"<EmployeeName>\": \"<value>\", ...},\n" +
+            "    \"Mon\": {\"<EmployeeName>\": \"<value>\", ...},\n" +
+            "    ...\n" +
+            "  }\n" +
+            "}\n" +
+            "For by_employee: read each employee row left-to-right across all 7 day columns.\n" +
+            "For by_day: read each day column top-to-bottom, one value per employee.\n" +
+            "Rules:\n" +
+            "- Use \"\" for completely blank cells. Use \"x\" for X marks or checkmarks.\n" +
+            "- Copy time ranges exactly as written (e.g. \"9:00-5:30\", \"10:00-6:30\").\n" +
+            "- Do NOT include hours numbers in values. Include ALL employees and ALL days.\n" +
+            $"- Use exactly these day-name keys: {dayKeyList}.\n" +
+            "- IMPORTANT: Any date column may be entirely blank for ALL employees (e.g., a public holiday). " +
+            "Output \"\" for all of them — do NOT redistribute values from an adjacent column.\n" +
+            "- CRITICAL: Do NOT shift values one column to the right. Each cell value belongs ONLY in the " +
+            "column whose header is directly above that cell. Read each column header and its cells independently.";
+
+        // Budget: two full grids in one response
+        int predictBudget = Math.Max(6000, names.Count * 7 * 60 + 1500);
+        string raw = await CallOllamaAsync(base64Image, prompt, ct, numPredict: predictBudget);
+
+        // ── Parse both views ──────────────────────────────────────────────────
+        var byEmployee = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+        var byDay      = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+
+            // Parse by_employee
+            if (doc.RootElement.TryGetProperty("by_employee", out var empElem))
+            {
+                foreach (var emp in empElem.EnumerateObject())
+                {
+                    var days = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    if (emp.Value.ValueKind == JsonValueKind.Object)
+                        foreach (var day in emp.Value.EnumerateObject())
+                            days[day.Name] = day.Value.GetString() ?? "";
+                    byEmployee[emp.Name] = days;
+                }
+            }
+
+            // Parse by_day
+            if (doc.RootElement.TryGetProperty("by_day", out var dayElem))
+            {
+                foreach (var day in dayElem.EnumerateObject())
+                {
+                    var emps = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    if (day.Value.ValueKind == JsonValueKind.Object)
+                        foreach (var emp in day.Value.EnumerateObject())
+                            emps[emp.Name] = emp.Value.GetString() ?? "";
+                    byDay[day.Name] = emps;
+                }
+            }
+        }
+        catch { /* return empty on parse failure */ }
+
+        // ── Cross-reference: build result per employee ────────────────────────
+        var result = new Dictionary<string, List<object>>(StringComparer.OrdinalIgnoreCase);
+        foreach (string name in names)
+        {
+            byEmployee.TryGetValue(name, out var empDays);
+            var shifts = new List<object>();
+
+            for (int i = 0; i < 7; i++)
+            {
+                string dayName = dayNames[i];
+                string date    = i < dates.Count ? NormalizeIsoDate(dates[i]) : "";
+
+                // Row view: what by_employee says for this employee/day
+                string rowVal = "";
+                if (empDays != null && empDays.TryGetValue(dayName, out var rv))
+                    rowVal = (rv ?? "").Trim();
+                rowVal = Regex.Replace(rowVal, @"\s+\d+(\.\d+)?$", "").Trim();
+                if (Regex.IsMatch(rowVal, @"^\d+\.?\d*$")) rowVal = "";
+
+                // Column view: what by_day says for this day/employee
+                string colVal = "";
+                if (byDay.TryGetValue(dayName, out var dayEmps) && dayEmps.TryGetValue(name, out var cv))
+                    colVal = (cv ?? "").Trim();
+                colVal = Regex.Replace(colVal, @"\s+\d+(\.\d+)?$", "").Trim();
+                if (Regex.IsMatch(colVal, @"^\d+\.?\d*$")) colVal = "";
+
+                string chosen;
+                if (string.Equals(rowVal, colVal, StringComparison.OrdinalIgnoreCase))
+                {
+                    // Both views agree (including both empty)
+                    chosen = rowVal;
+                }
+                else if (string.IsNullOrEmpty(rowVal))
+                {
+                    // Only column view has a value — use it
+                    chosen = colVal;
+                }
+                else if (string.IsNullOrEmpty(colVal))
+                {
+                    // Only row view has a value — use it
+                    chosen = rowVal;
+                }
+                else
+                {
+                    // Both views have different non-empty values — unresolvable disagreement.
+                    // Return "" so the other 5 majority-vote runs determine this cell.
+                    chosen = "";
+                }
+
+                shifts.Add(new { Date = date, Shift = chosen });
+            }
+            result[name] = shifts;
         }
         return result;
     }
@@ -752,7 +999,7 @@ public class OllamaCalendarService : ICalendarParseService
     /// <summary>
     /// Core Ollama call with JSON normalization. Returns the cleaned model text (or parsed JSON string).
     /// </summary>
-    private async Task<string> CallOllamaAsync(
+    internal async Task<string> CallOllamaAsync(
         string base64Image, string prompt, CancellationToken ct, bool isJson = true, int numPredict = -1)
     {
         var requestBody = new
@@ -858,7 +1105,7 @@ public class OllamaCalendarService : ICalendarParseService
     /// Checks if the model is already loaded via /api/ps. If not, sends a
     /// lightweight text-only request to load it before the heavy image call.
     /// </summary>
-    private async Task EnsureModelLoadedAsync(CancellationToken ct)
+    internal async Task EnsureModelLoadedAsync(CancellationToken ct)
     {
         try
         {
@@ -903,7 +1150,7 @@ public class OllamaCalendarService : ICalendarParseService
     /// _knownNames (Levenshtein ≤ 2 or parenthetical-suffix strip) and deduplicates.
     /// Fixes phantom names like "Athena(train)" → "Athena" and "Clara" → "Ciara".
     /// </summary>
-    private List<string> NormalizeNamesAgainstKnown(List<string> extracted)
+    internal List<string> NormalizeNamesAgainstKnown(List<string> extracted)
     {
         var result  = new List<string>(extracted.Count);
         var claimed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -957,7 +1204,7 @@ public class OllamaCalendarService : ICalendarParseService
     }
 
     /// <summary>Zero-pads month and day in ISO date strings so 2025-11-1 becomes 2025-11-01.</summary>
-    private static string NormalizeIsoDate(string d)
+    internal static string NormalizeIsoDate(string d)
     {
         var m = Regex.Match(d, @"^(\d{4})-(\d{1,2})-(\d{1,2})$");
         if (!m.Success) return d;
