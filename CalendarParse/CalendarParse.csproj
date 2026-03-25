@@ -75,18 +75,6 @@
 		<Content Remove="calander-parse-test-imgs\**" />
 	</ItemGroup>
 
-	<!-- Exclude files that have moved to CalendarParse.Core -->
-	<ItemGroup>
-		<Compile Remove="Models\CalendarData.cs" />
-		<Compile Remove="Models\EmployeeSchedule.cs" />
-		<Compile Remove="Models\ShiftEntry.cs" />
-		<Compile Remove="Models\TableCell.cs" />
-		<Compile Remove="Services\IServices.cs" />
-		<Compile Remove="Services\ICalendarParseService.cs" />
-		<Compile Remove="Services\CalendarStructureAnalyzer.cs" />
-		<Compile Remove="Services\CalendarParseService.cs" />
-	</ItemGroup>
-
 	<ItemGroup>
 		<PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
 		<PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.0" />

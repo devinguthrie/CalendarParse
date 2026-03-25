@@ -19,8 +19,6 @@ string folder = args[0];
 string nameFilter    = string.Empty;
 bool   testMode      = false;
 bool   visionMode    = false;
-bool   hybridMode    = false;
-bool   debugMode     = false;
 bool   halvesMode    = false;
 int    resizeWidth   = 0;
 string ollamaModel    = OllamaCalendarService.DefaultModel;
@@ -36,10 +34,6 @@ for (int i = 1; i < args.Length; i++)
         testMode = true;
     else if (args[i] is "--vision" or "-V")
         visionMode = true;
-    else if (args[i] is "--hybrid")
-        hybridMode = true;
-    else if (args[i] is "--debug" or "-d")
-        debugMode = true;
     else if (args[i] is "--model" && i + 1 < args.Length)
         ollamaModel = args[++i];
     else if (args[i] is "--preprocess" && i + 1 < args.Length)
@@ -70,27 +64,27 @@ if (!Directory.Exists(folder))
     return 1;
 }
 
+// ── Validate flag combinations ────────────────────────────────────────────────
+if (halvesMode && !visionMode)
+{
+    Console.Error.WriteLine("ERROR: --halves requires --vision");
+    return 1;
+}
+if (!string.IsNullOrEmpty(ensembleModel) && !visionMode)
+{
+    Console.Error.WriteLine("ERROR: --ensemble requires --vision");
+    return 1;
+}
+
 // ── Service wiring ────────────────────────────────────────────────────────────
 ICalendarParseService parser;
 var preprocessorInst = new WindowsImagePreprocessor();
-WindowsTableDetector?     tableDetectorInst = null;
-WindowsOcrService?        ocrServiceInst    = null;
-CalendarStructureAnalyzer? analyzerInst     = null;
 
 string[] knownNamesArr = string.IsNullOrEmpty(knownNamesArg)
     ? Array.Empty<string>()
     : knownNamesArg.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-if (hybridMode)
-{
-    parser = new HybridCalendarService(
-        model:      ollamaModel,
-        knownNames: knownNamesArr.Length > 0 ? knownNamesArr : null);
-    Console.WriteLine($"Mode: HYBRID (Ollama model: {ollamaModel} + WinRT OCR + grid crop)");
-    if (knownNamesArr.Length > 0)
-        Console.WriteLine($"Known names: {string.Join(", ", knownNamesArr)}");
-}
-else if (visionMode)
+if (visionMode)
 {
     parser = new OllamaCalendarService(model: ollamaModel, knownNames: knownNamesArr.Length > 0 ? knownNamesArr : null);
     Console.WriteLine($"Mode: VISION (Ollama model: {ollamaModel})");
@@ -101,10 +95,12 @@ else if (visionMode)
 }
 else
 {
-    tableDetectorInst = new WindowsTableDetector();
-    ocrServiceInst    = new WindowsOcrService();
-    analyzerInst      = new CalendarStructureAnalyzer();
-    parser = new CalendarParseService(preprocessorInst, tableDetectorInst, ocrServiceInst, analyzerInst);
+    parser = new HybridCalendarService(
+        model:      ollamaModel,
+        knownNames: knownNamesArr.Length > 0 ? knownNamesArr : null);
+    Console.WriteLine($"Mode: HYBRID (Ollama model: {ollamaModel} + WinRT OCR + grid crop)");
+    if (knownNamesArr.Length > 0)
+        Console.WriteLine($"Known names: {string.Join(", ", knownNamesArr)}");
 }
 
 // ── Batch processing ──────────────────────────────────────────────────────────
@@ -125,8 +121,8 @@ Console.WriteLine($"Found {imageFiles.Count} image(s) in {folder}");
 if (!string.IsNullOrWhiteSpace(nameFilter))
     Console.WriteLine($"Name filter: \"{nameFilter}\"");
 if (testMode)
-    Console.WriteLine("Mode: TEST (writing .guess.json, comparing against .answer.json)");if (debugMode)
-    Console.WriteLine("Mode: DEBUG (saving annotated pipeline images to <name>.debug-imgs/ folders)");Console.WriteLine();
+    Console.WriteLine("Mode: TEST (writing .guess.json, comparing against .answer.json)");
+Console.WriteLine();
 
 var results     = new List<(string file, bool ok, string detail)>();
 var outputPaths = new Dictionary<string, string>(); // imagePath → outPath (for test mode)
@@ -153,19 +149,21 @@ foreach (var imagePath in imageFiles)
 
         byte[] processedBytes = preprocessorInst.PreprocessBytes(rawBytes, preprocessMode);
 
-        // Write the preprocessed image to a dedicated subdirectory so it is
-        // never picked up as an input image on subsequent runs.
-        string debugExt    = WindowsImagePreprocessor.GetExtension(preprocessMode);
+        // Write the preprocessed image for inspection when a non-default mode is active.
         string debugImgDir = Path.Combine(folder, "preprocess-debug");
-        Directory.CreateDirectory(debugImgDir);
-        string debugImagePath = Path.Combine(debugImgDir, $"{name}_{preprocessMode.ToString().ToLower()}{debugExt}");
-        await File.WriteAllBytesAsync(debugImagePath, processedBytes);
+        if (preprocessMode != PreprocessMode.None)
+        {
+            Directory.CreateDirectory(debugImgDir);
+            string debugExt       = WindowsImagePreprocessor.GetExtension(preprocessMode);
+            string debugImagePath = Path.Combine(debugImgDir, $"{name}_{preprocessMode.ToString().ToLower()}{debugExt}");
+            await File.WriteAllBytesAsync(debugImagePath, processedBytes);
+        }
 
         string output = await parser.ProcessAsync(new MemoryStream(processedBytes), nameFilter);
 
         // ── Optional halves pass: re-extract bottom employees from a header + bottom-half
         // composite image and merge, to give the model more pixel budget on lower-table rows.
-        if (halvesMode && visionMode)
+        if (halvesMode)
         {
             Console.Write(" [halves...");
             byte[] bottomBytes     = preprocessorInst.CreateHeaderAndBottomHalf(rawBytes);
@@ -184,7 +182,7 @@ foreach (var imagePath in imageFiles)
         // ── P8: Ensemble blank-fill pass ──────────────────────────────────────
         // Run a secondary model and use its values to fill any cells the primary
         // model left blank (""). Never overwrites a non-blank primary value.
-        if (!string.IsNullOrEmpty(ensembleModel) && visionMode)
+        if (!string.IsNullOrEmpty(ensembleModel))
         {
             Console.Write(" [ensemble...");
             string[] kn = string.IsNullOrEmpty(knownNamesArg)
@@ -220,26 +218,6 @@ foreach (var imagePath in imageFiles)
 
         Console.WriteLine($"OK  ({empCount} employees → {Path.GetFileName(outPath)})  [{imageTimer.Elapsed.TotalSeconds:F1}s]");
         results.Add((Path.GetFileName(imagePath), true, $"{empCount} employees  {imageTimer.Elapsed.TotalSeconds:F1}s"));
-
-        // ── Optional debug image pass ─────────────────────────────────────────
-        if (debugMode && !visionMode &&
-            tableDetectorInst != null && ocrServiceInst != null)
-        {
-            string debugDir = Path.Combine(folder, name + ".debug-imgs");
-            try
-            {
-                Console.Write($"      [debug] saving pipeline images → {Path.GetFileName(debugDir)}/ ... ");
-                var debugTimer = System.Diagnostics.Stopwatch.StartNew();
-                await SaveDebugImagesAsync(imagePath, debugDir,
-                    preprocessorInst, tableDetectorInst, ocrServiceInst);
-                debugTimer.Stop();
-                Console.WriteLine($"done [{debugTimer.Elapsed.TotalSeconds:F1}s]");
-            }
-            catch (Exception debugEx)
-            {
-                Console.WriteLine($"WARN: debug images failed — {debugEx.Message}");
-            }
-        }
     }
     catch (Exception ex)
     {
@@ -676,101 +654,35 @@ static void PrintUsage()
     Console.WriteLine("Usage:");
     Console.WriteLine("  CalendarParse.Cli <image-folder> [options]");
     Console.WriteLine();
+    Console.WriteLine("Modes (default: hybrid):");
+    Console.WriteLine("  (no flag)             HYBRID: WinRT OCR column detection + per-day LLM crop (89.9% accuracy)");
+    Console.WriteLine("  -V, --vision          VISION: pure Ollama vision model, 5-pass multi-step (78.0% accuracy)");
+    Console.WriteLine();
     Console.WriteLine("Options:");
     Console.WriteLine("  -n, --name <filter>   Filter results to a specific employee name");
     Console.WriteLine("  -t, --test            Test mode: write .output.json and compare against .answer.json");
-    Console.WriteLine("  -V, --vision          Use local Ollama vision model instead of Tesseract");
-    Console.WriteLine("  -d, --debug           Save annotated pipeline images to <name>.debug-imgs/ folders");
-    Console.WriteLine("  --model <name>        Ollama model to use (default: llama3.2-vision:11b)");
-  Console.WriteLine("  --preprocess <mode>   Image preprocessing before the vision model:");
-  Console.WriteLine("                          none     Raw image bytes (default — current behaviour)");
-  Console.WriteLine("                          current  Grayscale→blur→adaptive-threshold→dilate (legacy OCR pipeline)");
-  Console.WriteLine("                          clahe    Grayscale→EqualizeHist (global histogram equalisation)");
-  Console.WriteLine("                          llm      Colour unsharp-mask sharpen (preserves RGB signal)");
-  Console.WriteLine("                          denoise  Grayscale→fast-denoise→EqualizeHist (for noisy scans)");
-  Console.WriteLine("                        Debug image written as <name>_<mode>.jpg/.png alongside source.");
-  Console.WriteLine("  --resize <width>      Resize image to this width (px) before sending to model. 0 = no resize.");
-  Console.WriteLine("                        qwen2.5vl:7b optimal input width is ~1120px.");
-  Console.WriteLine("  --halves              Also run extraction on a header+bottom-half composite image and merge.");
-  Console.WriteLine("                        Targets WRONG-COL errors in lower-table employees.");
-  Console.WriteLine("  --known-names <csv>   Comma-separated list of expected employee names.");
-  Console.WriteLine("                        P9: normalises OCR phantoms (e.g. \"Athena(train)\" → \"Athena\").");
-  Console.WriteLine("                        P10: injected into name-extraction prompt for better OCR spellings.");
-  Console.WriteLine("  --ensemble <model>    P8: run a secondary Ollama model and use its output to fill");
-  Console.WriteLine("                        cells the primary model left blank. Never overwrites non-blank values.");
+    Console.WriteLine("  --model <name>        Ollama model to use (default: qwen2.5vl:7b)");
+    Console.WriteLine("  --preprocess <mode>   Image preprocessing before the vision model:");
+    Console.WriteLine("                          none     Raw image bytes (default)");
+    Console.WriteLine("                          current  Grayscale→blur→adaptive-threshold→dilate");
+    Console.WriteLine("                          clahe    Grayscale→EqualizeHist (global histogram equalisation)");
+    Console.WriteLine("                          llm      Colour unsharp-mask sharpen (preserves RGB signal)");
+    Console.WriteLine("                          denoise  Grayscale→fast-denoise→EqualizeHist (for noisy scans)");
+    Console.WriteLine("                        Preprocessed image written to preprocess-debug/ when mode != none.");
+    Console.WriteLine("  --resize <width>      Resize image to this width (px) before sending to model. 0 = no resize.");
+    Console.WriteLine("                        qwen2.5vl:7b optimal input width is ~1120px.");
+    Console.WriteLine("  --halves              (--vision only) Also run on a header+bottom-half composite and merge.");
+    Console.WriteLine("                        Targets WRONG-COL errors in lower-table employees.");
+    Console.WriteLine("  --known-names <csv>   Comma-separated list of expected employee names.");
+    Console.WriteLine("                        Normalises OCR phantoms and improves name-extraction accuracy.");
+    Console.WriteLine("  --ensemble <model>    (--vision only) Run a secondary model to fill blank cells.");
+    Console.WriteLine("                        Never overwrites non-blank primary values.");
     Console.WriteLine();
     Console.WriteLine("Output:");
-    Console.WriteLine("  Normal: For each image.jpg, writes image.output.json in the same folder.");
-    Console.WriteLine("  Test:   For each image.jpg, writes image.output.json and reports accuracy.");
-    Console.WriteLine("  Debug:  For each image.jpg, writes annotated PNGs to image.debug-imgs/.");
-    Console.WriteLine("          01_original.png       — source image as decoded");
-    Console.WriteLine("          02_preprocessed.png   — adaptive-threshold output used for grid detection");
-    Console.WriteLine("          03_gridlines.png      — H+V morphological line masks overlaid on original");
-    Console.WriteLine("          04_cells.png          — each detected cell colour-coded by role");
-    Console.WriteLine("          05_ocr.png            — OCR text shown inside each detected cell");
+    Console.WriteLine("  For each image.jpg, writes image.output.json and image.debug.txt in the same folder.");
+    Console.WriteLine("  In --test mode, also reports accuracy against image.answer.json.");
     Console.WriteLine();
     Console.WriteLine("Requires:");
-    Console.WriteLine("  tessdata/eng.traineddata next to the executable.");
-    Console.WriteLine("  Download from: https://github.com/tesseract-ocr/tessdata");
-}
-
-/// <summary>
-/// Runs the preprocessing and grid-detection steps again on a single image and saves
-/// annotated debug PNGs to <paramref name="debugDir"/>.
-/// </summary>
-static async Task SaveDebugImagesAsync(
-    string imagePath,
-    string debugDir,
-    WindowsImagePreprocessor preprocessor,
-    WindowsTableDetector tableDetector,
-    WindowsOcrService ocrService)
-{
-    Directory.CreateDirectory(debugDir);
-
-    // 1. Original
-    var rawBytes = await File.ReadAllBytesAsync(imagePath);
-    DebugImageWriter.SaveRaw(rawBytes, Path.Combine(debugDir, "01_original.png"));
-
-    // 2. Preprocessed
-    await using var ms = new MemoryStream(rawBytes);
-    var preprocessed = await preprocessor.PreprocessAsync(ms);
-    DebugImageWriter.SavePreprocessed(preprocessed, Path.Combine(debugDir, "02_preprocessed.png"));
-
-    // 3. Grid lines overlay
-    var (cells, hLinesPng, vLinesPng) = await tableDetector.DetectCellsWithMasksAsync(preprocessed);
-    DebugImageWriter.SaveGridLinesOverlay(rawBytes, hLinesPng, vLinesPng,
-        Path.Combine(debugDir, "03_gridlines.png"));
-
-    // 4. Cells bounding boxes overlay (colour-coded by role)
-    // Heuristic: assume row 0 is header, col 0 is name column
-    int headerRow = cells.Count > 0 ? cells.Min(c => c.Row) : 0;
-    int nameCol   = cells.Count > 0 ? cells.Min(c => c.Col) : 0;
-    DebugImageWriter.SaveCellsOverlay(rawBytes, cells,
-        Path.Combine(debugDir, "04_cells.png"),
-        headerRow: headerRow,
-        nameCol:   nameCol);
-
-    // 5. OCR overlay — run OCR on the original, map elements into cells by spatial overlap
-    var ocrElements = await ocrService.RecognizeAsync(rawBytes);
-
-    // Simple spatial assignment: each OCR element's centre → containing cell
-    foreach (var el in ocrElements)
-    {
-        int cx = el.Bounds.X + el.Bounds.Width  / 2;
-        int cy = el.Bounds.Y + el.Bounds.Height / 2;
-        var best = cells.FirstOrDefault(c =>
-            cx >= c.Bounds.X && cx <= c.Bounds.X + c.Bounds.Width &&
-            cy >= c.Bounds.Y && cy <= c.Bounds.Y + c.Bounds.Height);
-        if (best is not null)
-        {
-            best.Text = string.IsNullOrWhiteSpace(best.Text)
-                ? el.Text
-                : best.Text + " " + el.Text;
-        }
-    }
-
-    DebugImageWriter.SaveOcrOverlay(rawBytes, cells,
-        Path.Combine(debugDir, "05_ocr.png"),
-        headerRow: headerRow,
-        nameCol:   nameCol);
+    Console.WriteLine("  Ollama running locally (https://ollama.com) with the model pulled.");
+    Console.WriteLine("  WinRT OCR available on Windows 10+ (no extra installation needed).");
 }
