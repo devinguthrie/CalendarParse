@@ -7,7 +7,6 @@
     <Nullable>enable</Nullable>
     <RootNamespace>CalendarParse.Cli</RootNamespace>
     <WindowsPackageType>None</WindowsPackageType>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>

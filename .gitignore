@@ -89,3 +89,6 @@ riderModule.iml
 calander-parse-test-imgs/**/*.output.json
 calander-parse-test-imgs/**/*.debug.txt
 calander-parse-test-imgs/
+
+# gstack security reports and session data (local only)
+.gstack/
