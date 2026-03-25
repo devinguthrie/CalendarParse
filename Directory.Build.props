@@ -1,0 +1,8 @@
+<Project>
+  <PropertyGroup>
+    <!-- Enforce reproducible NuGet restores via lockfile.
+         Run `dotnet restore` once to generate packages.lock.json in each
+         project directory, then commit those files. -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+</Project>

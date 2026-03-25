@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0-windows10.0.19041": {
+      "Emgu.CV": {
+        "type": "Direct",
+        "requested": "[4.12.0.5764, )",
+        "resolved": "4.12.0.5764",
+        "contentHash": "629jbQI7SjB6EviVwunEliIojnap2Pa239/phyjkrhMoQNJk43dWJBOhH4U9nLsOsKLSX4Xyv82t38xcXq4qyQ=="
+      },
+      "Emgu.CV.runtime.windows": {
+        "type": "Direct",
+        "requested": "[4.12.0.5764, )",
+        "resolved": "4.12.0.5764",
+        "contentHash": "RCOAc9kmxZp5F050ygd3pLTBFnSZWdxai/Dnyr/Q2EEV2R4JgXu+OoB4fr83GLeytTkll9WAeVWLRTDve9ijIA==",
+        "dependencies": {
+          "Emgu.CV": "4.12.0",
+          "Emgu.runtime.windows.msvc.rt.arm64": "19.44.35214",
+          "Emgu.runtime.windows.msvc.rt.x64": "19.44.35214",
+          "Emgu.runtime.windows.msvc.rt.x86": "19.44.35214"
+        }
+      },
+      "Emgu.runtime.windows.msvc.rt.arm64": {
+        "type": "Transitive",
+        "resolved": "19.44.35214",
+        "contentHash": "ugNJFVV01rvFAnS3swIm9TJiK/x2AlNZXOCB4bwp7U5gLZ35eUV62mnHqG6/yRk/I/k9aUjZZ/zwHFrHrgZyvg=="
+      },
+      "Emgu.runtime.windows.msvc.rt.x64": {
+        "type": "Transitive",
+        "resolved": "19.44.35214",
+        "contentHash": "QGKE7bohY7tLy7iBMJTY+VXQbM2nLVA7AFQLrqPHIK7bWTOPgeIbITefjUwYyxD/wFXwj93GOQq7VIAzDyNztA=="
+      },
+      "Emgu.runtime.windows.msvc.rt.x86": {
+        "type": "Transitive",
+        "resolved": "19.44.35214",
+        "contentHash": "Cgs6eutsi7s4vO79djADbOpXdKG5x1tq4R4hq5wDIv58FimSQyIiRvnkCbZzRMUcIpXOX09W4y7P2XKS9UfSYw=="
+      },
+      "calendarparse.core": {
+        "type": "Project"
+      }
+    }
+  }
+}
