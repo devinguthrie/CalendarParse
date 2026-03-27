@@ -38,6 +38,16 @@ public sealed class HybridCalendarService : ICalendarParseService
     private static readonly Regex TrailingHours = new(
         @"\s+\d+(\.\d+)?$", RegexOptions.Compiled);
 
+    // Date format found in calendar header rows: M/D (e.g. "9/21") or M/D/YY (e.g. "9/21/25").
+    private static readonly Regex OcrDatePattern =
+        new(@"^(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?$", RegexOptions.Compiled);
+
+    private static readonly string[] MonthNames =
+    {
+        "", "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"
+    };
+
     // Maps day-name tokens found by OCR to their 0-based day index (0=Sun…6=Sat).
     // Includes full names, 3-letter abbreviations, 2-letter variants, and common
     // OCR mis-reads / alternate spellings to maximise header detection.
@@ -131,6 +141,36 @@ public sealed class HybridCalendarService : ICalendarParseService
             string found = string.Join(",", dayColBounds.Keys.OrderBy(k => k).Select(k => dn[k]));
             Console.Error.WriteLine(
                 $"    [{T()}] ocr-cols: {dayColBounds.Count} day columns located ({found}), reliable={gridReliable}");
+        }
+
+        // ── OCR-based date override ────────────────────────────────────────────
+        // WinRT OCR reliably reads M/D tokens (e.g. "9/21") from the header row.
+        // If at least 4 are found, override the LLM-extracted dates and month —
+        // the LLM can hallucinate the month (e.g. "January" for a September image).
+        // Only override LLM header when OCR detects a DIFFERENT month — this is the
+        // tell-tale sign of a hallucination (e.g. LLM says "January" for a September image).
+        // When LLM and OCR agree on the month, trust the LLM dates (which are typically
+        // cleaner than garbled OCR tokens).
+        if (TryExtractOcrDates(ocrElements, dayColBounds, out var ocrIsoDates, out int ocrMonth, out int ocrYear)
+            && ocrYear > 0
+            && ocrMonth >= 1 && ocrMonth <= 12
+            && ocrIsoDates.Count(d => !string.IsNullOrEmpty(d)) >= 1)
+        {
+            // Compare OCR month number against LLM month name
+            int llmMonthNum = Array.IndexOf(MonthNames, month);  // 0 if not found, 1-12 otherwise
+            bool monthMismatch = llmMonthNum < 1 || ocrMonth != llmMonthNum;
+            if (monthMismatch)
+            {
+                string ocrMonthName = MonthNames[ocrMonth];
+                Console.Error.WriteLine(
+                    $"    [{T()}] ocr-dates: override LLM ({month} {year}) → OCR ({ocrMonthName} {ocrYear}), " +
+                    $"{ocrIsoDates.Count(d => !string.IsNullOrEmpty(d))}/7 dates");
+                month = ocrMonthName;
+                year  = ocrYear;
+                for (int i = 0; i < 7 && i < dates.Count; i++)
+                    if (!string.IsNullOrEmpty(ocrIsoDates[i]))
+                        dates[i] = ocrIsoDates[i];
+            }
         }
 
         // ── OCR pre-fill: time-range strings found directly in each day column ─
@@ -579,6 +619,147 @@ public sealed class HybridCalendarService : ICalendarParseService
         CvInvoke.Imencode(".jpg", roi, buf,
             new KeyValuePair<ImwriteFlags, int>(ImwriteFlags.JpegQuality, 92));
         return buf.ToArray();
+    }
+
+    /// <summary>
+    /// Extracts date strings from OCR header tokens adjacent to the detected day columns.
+    /// Uses permissive digit-group parsing to handle garbled OCR (e.g. "09,'21/2025").
+    /// Returns true if at least 1 date is found; missing columns are filled by
+    /// extrapolation from adjacent known dates.
+    /// Populates <paramref name="isoDates"/> (YYYY-MM-DD per day index, empty for
+    /// columns that couldn't be filled), <paramref name="month"/> (1–12),
+    /// and <paramref name="year"/>.
+    /// </summary>
+    private static bool TryExtractOcrDates(
+        List<OcrElement> ocrElements,
+        Dictionary<int, (int XStart, int XEnd)> dayColBounds,
+        out string[] isoDates,
+        out int month,
+        out int year)
+    {
+        isoDates = new string[7];
+        month = 0;
+        year  = 0;
+
+        if (dayColBounds.Count < 4) return false;
+
+        // Header row Y = minimum Y of any day-name OCR token
+        int headerY = int.MaxValue;
+        foreach (var elem in ocrElements)
+        {
+            string token = elem.Text.Trim();
+            bool isDayName = DayIndexMap.ContainsKey(token);
+            if (!isDayName && token.Length >= 3)
+                isDayName = DayPrefixes.Any(p =>
+                    token.StartsWith(p.Prefix, StringComparison.OrdinalIgnoreCase));
+            if (isDayName && elem.Bounds.Y < headerY)
+                headerY = elem.Bounds.Y;
+        }
+        if (headerY == int.MaxValue) return false;
+
+        // Search zone: from just above the topmost day-name to 100 px below it
+        int zoneTop    = Math.Max(0, headerY - 20);
+        int zoneBottom = headerY + 100;
+
+        // Digit-group extractor: pulls all numeric sequences from a token.
+        // More permissive than strict M/D/YYYY regex — handles garbled OCR like
+        // "09,'21/2025" (comma separator), "09/25/20?0" (? character), "09/27/2" (truncated).
+        // Requires the token to contain "/" or "," (date separator) to avoid false positives.
+        static bool TryParseOcrDateToken(string text, out int mo, out int day, out int yr)
+        {
+            mo = day = yr = 0;
+            if (!text.Contains('/') && !text.Contains(',')) return false;
+
+            // Extract all digit runs
+            var groups = Regex.Matches(text, @"\d+").Select(m => m.Value).ToList();
+            if (groups.Count < 2) return false;
+
+            if (!int.TryParse(groups[0], out mo) || mo < 1 || mo > 12) return false;
+
+            // Day: take up to 2 digits from the second group (handles "261202" → 26)
+            string dayStr = groups[1].Length <= 2 ? groups[1] : groups[1][..2];
+            if (!int.TryParse(dayStr, out day) || day < 1 || day > 31) return false;
+
+            // Year: find first group that's exactly 4 digits in [2020, 2035]
+            yr = 0;
+            foreach (var g in groups.Skip(2))
+            {
+                if (g.Length == 4 && int.TryParse(g, out int y4) && y4 >= 2020 && y4 <= 2035)
+                { yr = y4; break; }
+            }
+            return true;
+        }
+
+        var parsedDates = new Dictionary<int, (int Mo, int Day, int Yr)>();
+
+        foreach (var (dayIdx, (xStart, xEnd)) in dayColBounds)
+        {
+            var candidates = ocrElements
+                .Where(e => e.Bounds.Y >= zoneTop && e.Bounds.Y <= zoneBottom
+                         && e.Bounds.CenterX >= xStart && e.Bounds.CenterX <= xEnd)
+                .OrderBy(e => e.Bounds.Y)
+                .ToList();
+
+            foreach (var cand in candidates)
+            {
+                if (TryParseOcrDateToken(cand.Text.Trim(), out int mo, out int day, out int yr))
+                {
+                    parsedDates[dayIdx] = (mo, day, yr);
+                    break;
+                }
+            }
+        }
+
+        if (parsedDates.Count < 1) return false;
+
+        // Consensus month: most common valid month across all parsed dates.
+        // Then discard any entries whose month differs from the consensus —
+        // a garbled token like "2,'202S" may parse as mo=2 when the true month
+        // is 9; the consensus (4:1) still picks 9 correctly.
+        int consensusMonth = parsedDates.Values.GroupBy(d => d.Mo).OrderByDescending(g => g.Count()).First().Key;
+        month = consensusMonth;
+        foreach (var key in parsedDates.Keys.Where(k => parsedDates[k].Mo != consensusMonth).ToList())
+            parsedDates.Remove(key);
+
+        if (parsedDates.Count < 1) return false;
+
+        // Consensus year: prefer valid 4-digit years (yr > 0) over yr=0 (not found in token)
+        var validYears = parsedDates.Values.Where(d => d.Yr > 0).ToList();
+        year = validYears.Count > 0
+            ? validYears.GroupBy(d => d.Yr).OrderByDescending(g => g.Count()).First().Key
+            : 0;
+
+        foreach (var (dayIdx, (mo, day, yr)) in parsedDates)
+        {
+            int effectiveYr = yr > 0 ? yr : year;
+            if (effectiveYr > 0)
+                isoDates[dayIdx] = $"{effectiveYr:D4}-{mo:D2}-{day:D2}";
+        }
+
+        // Fill missing columns by extrapolation from nearest known date
+        for (int i = 0; i < 7; i++)
+        {
+            if (!string.IsNullOrEmpty(isoDates[i])) continue;
+            for (int offset = 1; offset <= 6; offset++)
+            {
+                bool filled = false;
+                foreach (int sign in new[] { -1, 1 })
+                {
+                    int neighbor = i + sign * offset;
+                    if (neighbor < 0 || neighbor >= 7) continue;
+                    if (string.IsNullOrEmpty(isoDates[neighbor])) continue;
+                    if (DateTime.TryParse(isoDates[neighbor], out var neighborDate))
+                    {
+                        isoDates[i] = neighborDate.AddDays(i - neighbor).ToString("yyyy-MM-dd");
+                        filled = true;
+                        break;
+                    }
+                }
+                if (filled) break;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>
