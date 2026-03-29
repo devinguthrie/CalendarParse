@@ -115,7 +115,7 @@ public sealed class HybridCalendarService : ICalendarParseService
                 .Where(n => n.Contains(nameFilter, StringComparison.OrdinalIgnoreCase))
                 .ToList();
         Console.Error.WriteLine(
-            $"    [{T()}] pass 2/4: names ({names.Count} employees)");
+            $"    [{T()}] pass 2/4: names ({names.Count} employees): {string.Join(", ", names)}");
 
         // ── WinRT OCR on original image ───────────────────────────────────────
         var ocrElements = await _winRtOcr.RecognizeAsync(rawBytes, ct);
@@ -152,24 +152,56 @@ public sealed class HybridCalendarService : ICalendarParseService
         // When LLM and OCR agree on the month, trust the LLM dates (which are typically
         // cleaner than garbled OCR tokens).
         if (TryExtractOcrDates(ocrElements, dayColBounds, out var ocrIsoDates, out int ocrMonth, out int ocrYear)
-            && ocrYear > 0
-            && ocrMonth >= 1 && ocrMonth <= 12
-            && ocrIsoDates.Count(d => !string.IsNullOrEmpty(d)) >= 1)
+            && ocrMonth >= 1 && ocrMonth <= 12)
         {
             // Compare OCR month number against LLM month name
             int llmMonthNum = Array.IndexOf(MonthNames, month);  // 0 if not found, 1-12 otherwise
             bool monthMismatch = llmMonthNum < 1 || ocrMonth != llmMonthNum;
             if (monthMismatch)
             {
+                // When OCR date tokens lack an embedded year (e.g. "9/21" vs "9/21/25"),
+                // ocrYear == 0. Fall back to the LLM-detected year in that case.
+                int effectiveYear = ocrYear > 0 ? ocrYear : year;
                 string ocrMonthName = MonthNames[ocrMonth];
                 Console.Error.WriteLine(
-                    $"    [{T()}] ocr-dates: override LLM ({month} {year}) → OCR ({ocrMonthName} {ocrYear}), " +
-                    $"{ocrIsoDates.Count(d => !string.IsNullOrEmpty(d))}/7 dates");
+                    $"    [{T()}] ocr-dates: override LLM ({month} {year}) → OCR ({ocrMonthName} {effectiveYear}), " +
+                    $"{ocrIsoDates.Count(d => !string.IsNullOrEmpty(d))}/7 dates (ocrYear={ocrYear})");
                 month = ocrMonthName;
-                year  = ocrYear;
+                year  = effectiveYear;
+                // Regenerate ISO dates using the corrected month+year whenever OCR
+                // parsed the day number but couldn't produce a full ISO string.
+                for (int i = 0; i < 7 && i < dates.Count; i++)
+                {
+                    if (!string.IsNullOrEmpty(ocrIsoDates[i]))
+                        dates[i] = ocrIsoDates[i];
+                    // ocrIsoDates[i] is empty when year was missing from the token —
+                    // rebuild it from the corrected month/year + OCR day number.
+                    else if (TryGetOcrDay(ocrElements, dayColBounds, i, ocrMonth, out int ocrDay)
+                             && effectiveYear > 0)
+                        dates[i] = $"{effectiveYear:D4}-{ocrMonth:D2}-{ocrDay:D2}";
+                }
+            }
+            else if (ocrYear > 0 && ocrIsoDates.Count(d => !string.IsNullOrEmpty(d)) >= 1)
+            {
+                // Months agree; still override individual dates where OCR is available
                 for (int i = 0; i < 7 && i < dates.Count; i++)
                     if (!string.IsNullOrEmpty(ocrIsoDates[i]))
                         dates[i] = ocrIsoDates[i];
+            }
+        }
+
+        // ── Year-consistency pass ─────────────────────────────────────────────
+        // The LLM sometimes sets a wrong year for individual dates (e.g., "2023-10-31"
+        // inside an otherwise October 2025 calendar).  Correct any date whose year
+        // doesn't match the consensus year we have at this point.
+        if (year > 0)
+        {
+            for (int i = 0; i < dates.Count; i++)
+            {
+                if (!DateTime.TryParse(dates[i], out var dt)) continue;
+                if (dt.Year == year) continue;
+                // Replace wrong year, preserving month and day (handles Nov-in-Oct weeks too)
+                dates[i] = new DateTime(year, dt.Month, dt.Day).ToString("yyyy-MM-dd");
             }
         }
 
@@ -236,9 +268,84 @@ public sealed class HybridCalendarService : ICalendarParseService
             Console.Error.WriteLine($"    [{T()}] ocr pre-fill: {ocrFilled} time-range cells filled directly");
 
         // \u2500\u2500 Name column right-edge: left boundary of first day column \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        // Use the leftmost day-column's left edge as the name column boundary.
+        // Using dayColBounds[0] (Sun) is wrong for Mon-Sun calendars where Sun is last.
         int nameXEnd = dayColBounds.Count > 0
-            ? dayColBounds[0].XStart
+            ? dayColBounds.Values.Min(b => b.XStart)
             : Math.Min(250, imageWidth);
+
+        // ── Reorder names by OCR Y-position to match visual row order ─────────
+        // Pass 2's LLM may return names in KnownNames order rather than the
+        // visual top-to-bottom order in the image. Use OCR token Y-positions
+        // from the name column to re-sort, fixing row-assignment errors.
+        {
+            var nameToY = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (string name in names)
+            {
+                // Use 3-char prefix to tolerate OCR noise ("Megan" → "Meg")
+                string first = name.Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
+                string prefix = first.Substring(0, Math.Min(first.Length, 3));
+                // Search up to nameXEnd + 50px to tolerate name labels near the boundary
+                int nameSearchX = nameXEnd + 50;
+                var hit = ocrElements
+                    .Where(e => e.Bounds.CenterX < nameSearchX
+                             && e.Text.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(e => e.Bounds.Y)
+                    .FirstOrDefault();
+                if (hit is not null)
+                    nameToY[name] = hit.Bounds.Y;
+            }
+
+            Console.Error.WriteLine(
+                $"    [{T()}] name-ocr-y: found {nameToY.Count}/{names.Count} — " +
+                string.Join(", ", names.Select(n => nameToY.TryGetValue(n, out int y) ? $"{n}={y}" : $"{n}=?")));
+
+            // Only reorder if at least 3 Y-anchors found.
+            // For names without OCR hits, interpolate Y from nearest known neighbors
+            // in the original order to preserve their relative positions.
+            if (nameToY.Count >= 3)
+            {
+                var sortKey = new double[names.Count];
+                for (int i = 0; i < names.Count; i++)
+                {
+                    string n = names[i];
+                    if (nameToY.TryGetValue(n, out int y))
+                    {
+                        sortKey[i] = y;
+                    }
+                    else
+                    {
+                        // Find nearest known neighbors in original list
+                        double prevY = double.MinValue, nextY = double.MaxValue;
+                        for (int j = i - 1; j >= 0; j--)
+                            if (nameToY.TryGetValue(names[j], out int py)) { prevY = py; break; }
+                        for (int j = i + 1; j < names.Count; j++)
+                            if (nameToY.TryGetValue(names[j], out int ny) && ny > prevY) { nextY = ny; break; }
+
+                        sortKey[i] = prevY == double.MinValue && nextY == double.MaxValue
+                            ? i * 50.0
+                            : prevY == double.MinValue
+                                ? nextY - (nextY / names.Count) + i
+                                : nextY == double.MaxValue
+                                    ? prevY + (prevY / names.Count) + i
+                                    : (prevY + nextY) / 2.0 + i * 0.001;
+                    }
+                }
+
+                var reordered = Enumerable.Range(0, names.Count)
+                    .OrderBy(i => sortKey[i])
+                    .Select(i => names[i])
+                    .ToList();
+
+                bool changed = !names.SequenceEqual(reordered, StringComparer.OrdinalIgnoreCase);
+                if (changed)
+                {
+                    Console.Error.WriteLine(
+                        $"    [{T()}] name-reorder ({nameToY.Count}/{names.Count} anchors): {string.Join(", ", reordered)}");
+                    names = reordered;
+                }
+            }
+        }
 
         // ── Pass 3: column-strip LLM query for each day column ────────────────
         for (int dayIdx = 0; dayIdx < 7; dayIdx++)
@@ -371,6 +478,149 @@ public sealed class HybridCalendarService : ICalendarParseService
             shiftMap[name] = shifts;
         }
 
+        // ── OCR name supplementation ──────────────────────────────────────────
+        // If the LLM missed some employees in pass 2, the name column in OCR
+        // still contains their names. Find and add them now with OCR-extracted shifts.
+        // When known names are provided we fuzzy-match fragments to full names and reject
+        // anything that doesn't match. Without known names we use heuristics to skip
+        // obvious metrics/footer rows (all-caps abbreviations, short tokens, etc.).
+        if (gridReliable && dayColBounds.Count >= 4)
+        {
+            // Find the header row Y-position (topmost day-name OCR token)
+            int ocrHeaderY = ocrElements
+                .Where(e => DayIndexMap.ContainsKey(e.Text.Trim())
+                         || DayPrefixes.Any(p => e.Text.Trim().StartsWith(p.Prefix,
+                                StringComparison.OrdinalIgnoreCase)))
+                .Select(e => e.Bounds.Y)
+                .DefaultIfEmpty(0)
+                .Min();
+
+            // Collect name-column alphabetic tokens below the header
+            var nameColElems = ocrElements
+                .Where(e => e.Bounds.CenterX < nameXEnd
+                         && e.Bounds.Y > ocrHeaderY + 10
+                         && e.Text.Length >= 2
+                         && Regex.IsMatch(e.Text, @"^[A-Za-z]")
+                         && !IsHeaderLike(e.Text))
+                .OrderBy(e => e.Bounds.Y)
+                .ToList();
+
+            // Group into Y-bands (tokens within 20px of each other → same row)
+            var nameRows = new List<(int Y, string Text)>();
+            foreach (var elem in nameColElems)
+            {
+                int cy = elem.Bounds.CenterY;
+                var existing = nameRows.FirstOrDefault(r => Math.Abs(r.Y - cy) < 20);
+                if (existing.Text != null)
+                {
+                    int idx = nameRows.IndexOf(existing);
+                    if (elem.Text.Length > existing.Text.Length)
+                        nameRows[idx] = (existing.Y, elem.Text);
+                }
+                else
+                    nameRows.Add((cy, elem.Text));
+            }
+
+            var alreadyFound = new HashSet<string>(names, StringComparer.OrdinalIgnoreCase);
+            bool hasKnownNames = _ollama._knownNames.Count > 0;
+            // Common metrics/footer words that appear in calendar images but are not employee names
+            var metricsWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "Volume", "Hours", "SPLH", "UPT", "ADT", "inv", "Bank", "Negative",
+                "check", "Total", "Average", "Notes", "Manager", "Date", "Week"
+            };
+
+            foreach (var (rowY, rowText) in nameRows)
+            {
+                // Skip if this OCR token is already covered by a detected name (3-char prefix)
+                bool covered = names.Any(n =>
+                {
+                    string first = n.Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
+                    string prefix = first.Substring(0, Math.Min(first.Length, 3));
+                    return rowText.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+                });
+                if (covered) continue;
+
+                string? matchedKnown = null;
+
+                if (hasKnownNames)
+                {
+                    // With known names: fuzzy-match the OCR fragment to the nearest known name.
+                    // Matches: OCR is a prefix of known name, known name contains OCR text, or
+                    //          OCR starts with first 3 chars of known name.
+                    foreach (var kn in _ollama._knownNames)
+                    {
+                        if (alreadyFound.Contains(kn)) continue;
+                        string knFirst = kn.Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
+                        // "Brittn" → "Brittney": OCR text is prefix of known first name (length >= 3)
+                        if (rowText.Length >= 3 && knFirst.StartsWith(rowText, StringComparison.OrdinalIgnoreCase))
+                        { matchedKnown = kn; break; }
+                        // "ndee" → "Andee": known name contains the OCR fragment (length >= 3)
+                        if (rowText.Length >= 3 && knFirst.Contains(rowText, StringComparison.OrdinalIgnoreCase))
+                        { matchedKnown = kn; break; }
+                        // "Sarah" → "Sarah": OCR starts with first 3 chars of known name
+                        if (rowText.StartsWith(knFirst.Substring(0, Math.Min(knFirst.Length, 3)),
+                                StringComparison.OrdinalIgnoreCase) && rowText.Length >= 4)
+                        { matchedKnown = kn; break; }
+                    }
+                    // No known-name match → skip (e.g. metrics rows)
+                    if (matchedKnown == null) continue;
+                }
+                else
+                {
+                    // Without known names: apply heuristics to filter out non-name tokens.
+                    // Skip: all-caps abbreviations (SPLH, UPT, ADT), known metrics words,
+                    //       tokens starting with lowercase, or too short.
+                    if (rowText.Length < 4) continue;
+                    if (rowText == rowText.ToUpper()) continue;       // all-caps abbreviation
+                    if (char.IsLower(rowText[0])) continue;           // lowercase-start
+                    if (metricsWords.Contains(rowText)) continue;     // known metrics word
+                    matchedKnown = rowText;  // use raw OCR text as name
+                }
+
+                Console.Error.WriteLine($"    [{T()}] ocr-name-supp: adding '{matchedKnown}' (OCR '{rowText}', Y={rowY})");
+                names.Add(matchedKnown);
+                alreadyFound.Add(matchedKnown);
+
+                // Extract shifts for this employee from OCR by scanning each day column
+                // at approximately the employee's Y position.
+                var suppShifts = new List<object>();
+                for (int colIdx = 0; colIdx < 7; colIdx++)
+                {
+                    string date = colIdx < dates.Count
+                        ? OllamaCalendarService.NormalizeIsoDate(dates[colIdx])
+                        : "";
+
+                    string shiftVal = "";
+                    if (dayColBounds.TryGetValue(colIdx, out var colB))
+                    {
+                        // Look for any time-range or marker token in this column near the employee's Y.
+                        // Use wider Y tolerance (30px) since shift cells may not center-align with name text.
+                        var cellCandidates = ocrElements
+                            .Where(e => e.Bounds.CenterX >= colB.XStart
+                                     && e.Bounds.CenterX <= colB.XEnd
+                                     && Math.Abs(e.Bounds.CenterY - rowY) < 30
+                                     && !IsHeaderLike(e.Text))
+                            .OrderBy(e => Math.Abs(e.Bounds.CenterY - rowY))
+                            .ToList();
+
+                        foreach (var cand in cellCandidates)
+                        {
+                            string t = NormalizeShift(cand.Text);
+                            if (TimeRangeRegex.IsMatch(t)) { shiftVal = t; break; }
+                            if (t.Equals("x", StringComparison.OrdinalIgnoreCase)
+                             || t.Equals("xx", StringComparison.OrdinalIgnoreCase)
+                             || t.Equals("RTO", StringComparison.OrdinalIgnoreCase)
+                             || t.Equals("PTO", StringComparison.OrdinalIgnoreCase))
+                            { shiftVal = t; break; }
+                        }
+                    }
+                    suppShifts.Add(new { Date = date, Shift = shiftVal });
+                }
+                shiftMap[matchedKnown] = suppShifts;
+            }
+        }
+
         // ── Assemble JSON ─────────────────────────────────────────────────────
         var employees = new List<object>();
         foreach (string name in names)
@@ -429,6 +679,23 @@ public sealed class HybridCalendarService : ICalendarParseService
 
         if (centers.Count < 4) return new();
 
+        // Interpolate centers for missing day columns from their nearest neighbors.
+        // Fixes cases where OCR misses one header (e.g. Wed in IM-3) — the column
+        // would otherwise fall back to a slow, error-prone full-image LLM query.
+        var knownDays = centers.Keys.OrderBy(k => k).ToList();
+        for (int dayIdx = 0; dayIdx <= 6; dayIdx++)
+        {
+            if (centers.ContainsKey(dayIdx)) continue;
+            int left  = knownDays.LastOrDefault(k => k < dayIdx, -1);
+            int right = knownDays.FirstOrDefault(k => k > dayIdx, -1);
+            if (left < 0 || right < 0) continue;   // can't bracket — skip
+            int span = right - left;
+            int interpolated = centers[left] + (centers[right] - centers[left]) * (dayIdx - left) / span;
+            centers[dayIdx] = interpolated;
+            Console.Error.WriteLine(
+                $"    [col-interp] day {dayIdx} center={interpolated} (interpolated from day {left}..{right})");
+        }
+
         // Sort found days by x-position and compute boundaries as midpoints.
         var sorted = centers.OrderBy(kv => kv.Value).ToList();
         var result = new Dictionary<int, (int XStart, int XEnd)>();
@@ -443,6 +710,8 @@ public sealed class HybridCalendarService : ICalendarParseService
                                                  : (sorted[i - 1].Value + center) / 2;
             int xEnd   = i == sorted.Count - 1  ? Math.Min(imageWidth, center + spanR)
                                                  : (center + sorted[i + 1].Value) / 2;
+            Console.Error.WriteLine(
+                $"    [col-bounds] day {dayIdx} center={center} x=[{xStart},{xEnd}] w={xEnd - xStart}");
             result[dayIdx] = (xStart, xEnd);
         }
 
@@ -760,6 +1029,39 @@ public sealed class HybridCalendarService : ICalendarParseService
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Extracts the day number for <paramref name="dayIdx"/> from OCR tokens within the
+    /// column bounds, requiring the token to match the expected <paramref name="expectedMonth"/>.
+    /// Used to reconstruct ISO date strings when OCR tokens lack an embedded year.
+    /// </summary>
+    private static bool TryGetOcrDay(
+        List<OcrElement> ocrElements,
+        Dictionary<int, (int XStart, int XEnd)> dayColBounds,
+        int dayIdx,
+        int expectedMonth,
+        out int day)
+    {
+        day = 0;
+        if (!dayColBounds.TryGetValue(dayIdx, out var bounds)) return false;
+
+        var candidates = ocrElements
+            .Where(e => e.Bounds.CenterX >= bounds.XStart && e.Bounds.CenterX <= bounds.XEnd)
+            .OrderBy(e => e.Bounds.Y)
+            .ToList();
+
+        foreach (var cand in candidates)
+        {
+            string t = cand.Text.Trim();
+            if (!t.Contains('/') && !t.Contains(',')) continue;
+            var groups = Regex.Matches(t, @"\d+").Select(m => m.Value).ToList();
+            if (groups.Count < 2) continue;
+            if (!int.TryParse(groups[0], out int mo) || mo != expectedMonth) continue;
+            string dayStr = groups[1].Length <= 2 ? groups[1] : groups[1][..2];
+            if (int.TryParse(dayStr, out int d) && d >= 1 && d <= 31) { day = d; return true; }
+        }
+        return false;
     }
 
     /// <summary>
