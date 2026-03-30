@@ -24,10 +24,10 @@
 param(
     [switch]$DryRun,
     [int]$MaxIterations = 20,
-    [int]$TargetScore = 160,
+    [int]$TargetScore = 245,
     [string]$Model = 'qwen2.5vl:7b',
     [string]$ImgDir = 'CalendarParse\calander-parse-test-imgs',
-    [string]$KnownNames = 'Andee,Brittney,Cyndee,Sarah,Franny,Jenny,Victor,Halle,Kyleigh,Seena,Ciara,Athena,Tori'
+    [string]$KnownNames = 'Andee,Brittney,Cyndee,Sarah,Franny,Jenny,Victor,Halle,Kyleigh,Seena,Ciara,Athena,Tori,Megan,Raul'
 )
 
 Set-StrictMode -Version Latest
@@ -35,15 +35,30 @@ $ErrorActionPreference = 'Stop'
 
 # ── Repo root (script lives at repo root) ────────────────────────────────────
 $RepoRoot = $PSScriptRoot
+$DefaultBranch = (& git -C $PSScriptRoot symbolic-ref --short HEAD 2>$null) ?? 'master'
 $HybridFile  = Join-Path $RepoRoot 'CalendarParse.Cli\Services\HybridCalendarService.cs'
-$OllamaFile  = Join-Path $RepoRoot 'CalendarParse.Cli\Services\OllamaCalendarService.cs'
 $TriedFile   = Join-Path $RepoRoot 'tried_changes.json'
 $ResultsFile = Join-Path $RepoRoot 'loop-results.md'
 $ProjectPath = Join-Path $RepoRoot 'CalendarParse.Cli'
 
-# ── 1. Check API key ──────────────────────────────────────────────────────────
+# ── 1. Load .env file if present ─────────────────────────────────────────────
+$EnvFile = Join-Path $RepoRoot '.env'
+if (Test-Path $EnvFile) {
+    foreach ($line in (Get-Content $EnvFile -Encoding UTF8)) {
+        $line = $line.Trim()
+        if ($line -eq '' -or $line.StartsWith('#')) { continue }
+        $idx = $line.IndexOf('=')
+        if ($idx -lt 1) { continue }
+        $key   = $line.Substring(0, $idx).Trim()
+        $value = $line.Substring($idx + 1).Trim().Trim('"').Trim("'")
+        [System.Environment]::SetEnvironmentVariable($key, $value, 'Process')
+    }
+    Write-Host "==> Loaded .env from $EnvFile" -ForegroundColor DarkGray
+}
+
+# ── 2. Check API key ──────────────────────────────────────────────────────────
 if (-not $env:ANTHROPIC_API_KEY) {
-    Write-Error 'ANTHROPIC_API_KEY environment variable is not set. Aborting.'
+    Write-Error 'ANTHROPIC_API_KEY not found. Set it in a .env file or as an environment variable.'
     exit 1
 }
 
@@ -83,7 +98,7 @@ function Invoke-Benchmark {
     Push-Location $RepoRoot
     try {
         $output = & dotnet run --project $ProjectPath --no-build -- `
-            $ImgDir --hybrid --model $Model --test --known-names $KnownNames 2>&1
+            $ImgDir --model $Model --test --known-names $KnownNames 2>&1
     } finally {
         Pop-Location
     }
@@ -142,7 +157,7 @@ function Read-TriedChanges {
     $raw = Get-Content $TriedFile -Raw -Encoding UTF8
     if ([string]::IsNullOrWhiteSpace($raw)) { return @() }
     try {
-        return $raw | ConvertFrom-Json
+        return @($raw | ConvertFrom-Json)
     } catch {
         return @()
     }
@@ -174,14 +189,58 @@ function Invoke-ClaudeApi($systemPrompt, $userPrompt) {
         'content-type'      = 'application/json'
     }
 
-    $response = Invoke-RestMethod `
-        -Uri 'https://api.anthropic.com/v1/messages' `
-        -Method POST `
-        -Headers $headers `
-        -Body $body `
-        -ContentType 'application/json'
+    try {
+        $response = Invoke-RestMethod `
+            -Uri 'https://api.anthropic.com/v1/messages' `
+            -Method POST `
+            -Headers $headers `
+            -Body $body `
+            -ContentType 'application/json'
+    } catch {
+        $errText = "$_" + ($_.ErrorDetails?.Message ?? '')
+        if ($errText -match 'credit balance is too low' -or $errText -match 'billing') {
+            Write-Host ''
+            Write-Host '==> OUT OF CREDITS: Add credits at console.anthropic.com/settings/billing' -ForegroundColor Red
+            exit 2
+        }
+        if ($errText -match 'rate_limit_error' -or $errText -match 'rate limit') {
+            Write-Host '  --> Rate limit hit. Waiting 65 seconds...' -ForegroundColor Yellow
+            Start-Sleep -Seconds 65
+            # Re-throw so the caller's retry loop handles it
+        }
+        throw
+    }
 
     return $response.content[0].text
+}
+
+# ── Helper: escape unescaped double quotes inside JSON string values ──────────
+# Walks the JSON character by character; any " inside a string that isn't already
+# escaped gets rewritten as \". Handles already-correct JSON without changing it.
+function Repair-JsonQuotes([string]$json) {
+    $sb        = [System.Text.StringBuilder]::new($json.Length + 64)
+    $inString  = $false
+    $escaped   = $false
+    for ($i = 0; $i -lt $json.Length; $i++) {
+        $c = $json[$i]
+        if ($escaped)           { [void]$sb.Append($c); $escaped = $false; continue }
+        if ($c -eq '\')         { [void]$sb.Append($c); $escaped = $true;  continue }
+        if ($c -eq '"') {
+            if (-not $inString) { $inString = $true;  [void]$sb.Append($c); continue }
+            # Determine if this is a legitimate closing quote by peeking ahead
+            $next = $i + 1
+            while ($next -lt $json.Length -and $json[$next] -match '[ \t]') { $next++ }
+            $nc = if ($next -lt $json.Length) { $json[$next] } else { '}' }
+            if ($nc -eq ':' -or $nc -eq ',' -or $nc -eq '}' -or $nc -eq ']') {
+                $inString = $false; [void]$sb.Append($c)
+            } else {
+                [void]$sb.Append('\"')   # embedded quote — escape it
+            }
+            continue
+        }
+        [void]$sb.Append($c)
+    }
+    return $sb.ToString()
 }
 
 # ── Helper: parse ProposedChange JSON from Claude response ────────────────────
@@ -198,8 +257,13 @@ function Parse-ProposedChange($responseText) {
     }
     $json = $cleaned.Substring($start, $end - $start + 1)
 
+    # First try: standard parse
+    try { return $json | ConvertFrom-Json } catch { }
+
+    # Fallback: repair unescaped embedded quotes then retry
     try {
-        return $json | ConvertFrom-Json
+        $repaired = Repair-JsonQuotes $json
+        return $repaired | ConvertFrom-Json
     } catch {
         throw "Failed to parse JSON: $_`nRaw: $json"
     }
@@ -220,9 +284,9 @@ function Count-Occurrences([string]$haystack, [string]$needle) {
 
 # ── Helper: get next tried_change id ─────────────────────────────────────────
 function Get-NextTriedId {
-    $tried = Read-TriedChanges
-    if ($tried -isnot [array] -or $tried.Count -eq 0) { return 1 }
-    $maxId = ($tried | ForEach-Object { [int]($_.id) } | Measure-Object -Maximum).Maximum
+    $tried = @(Read-TriedChanges)
+    if ($tried.Count -eq 0) { return 1 }
+    $maxId = (@($tried) | ForEach-Object { [int]($_.id) } | Measure-Object -Maximum).Maximum
     return $maxId + 1
 }
 
@@ -278,7 +342,10 @@ NEVER propose these changes (known regressions):
 - Numbered-column prompts (-3.4 pts)
 - Drift detector threshold=1 (-8 pts)
 
-Return ONLY valid JSON with this exact schema (no markdown, no explanation):
+Return ONLY valid JSON with this exact schema (no markdown, no explanation).
+CRITICAL: The "search" and "replace" values often contain C# string literals with double quotes.
+You MUST escape every double-quote character inside a JSON string value as \" (backslash-quote).
+Failure to escape embedded double quotes produces invalid JSON that cannot be parsed.
 {
   "change_type": "prompt_string | threshold | regex | algorithm | ocr_logic | crop_geometry | postprocess",
   "file": "CalendarParse.Cli/Services/HybridCalendarService.cs",
@@ -315,22 +382,25 @@ while ($iteration -lt $MaxIterations -and $currentScore -lt $TargetScore) {
 
     # ── 5a. Read file contents ────────────────────────────────────────────────
     $hybridContent = [System.IO.File]::ReadAllText($HybridFile)
-    $ollamaContent = [System.IO.File]::ReadAllText($OllamaFile)
 
     # ── 5b. Build meta-agent user prompt ─────────────────────────────────────
     $pctStr    = [math]::Round(($currentScore / $currentTotal) * 100, 1)
     $errorList = Format-ErrorList $currentErrors
-    $triedList = (Get-Content $TriedFile -Raw -Encoding UTF8)
+
+    # Cap tried_changes to the last 20 entries to keep token count bounded
+    $triedAll  = @(Read-TriedChanges)
+    $triedRecent = if ($triedAll.Count -gt 20) { $triedAll[-20..-1] } else { $triedAll }
+    $triedList = $triedRecent | ConvertTo-Json -Depth 5
 
     $UserPrompt = @"
 Current accuracy: $currentScore/$currentTotal ($pctStr%)
-Baseline: 151/168 (89.9%)
+Baseline: 153/168 (91.1%)
 Target: 160/168 (95.2%)
 
 FAILING CELLS:
 $errorList
 
-TRIED CHANGES (do not repeat):
+TRIED CHANGES — last $($triedRecent.Count) of $($triedAll.Count) (do not repeat):
 $triedList
 
 FULL CONTENT OF CalendarParse.Cli/Services/HybridCalendarService.cs:
@@ -338,20 +408,16 @@ FULL CONTENT OF CalendarParse.Cli/Services/HybridCalendarService.cs:
 $hybridContent
 ---
 
-FULL CONTENT OF CalendarParse.Cli/Services/OllamaCalendarService.cs:
----
-$ollamaContent
----
-
 Propose ONE change targeting the most impactful error type. Return JSON only.
 "@
 
     # ── 5c+d. Call Claude API and parse proposal (with retry) ─────────────────
-    $proposal       = $null
-    $retryCount     = 0
-    $validProposal  = $false
+    $proposal          = $null
+    $retryCount        = 0
+    $validProposal     = $false
+    $malformedProposal = $false   # bad search string — no point retrying
 
-    while (-not $validProposal -and $retryCount -lt $maxRetries) {
+    while (-not $validProposal -and -not $malformedProposal -and $retryCount -lt $maxRetries) {
         try {
             Write-Host '  --> Calling Claude API...'
             $responseText = Invoke-ClaudeApi $SystemPrompt $UserPrompt
@@ -376,6 +442,9 @@ Propose ONE change targeting the most impactful error type. Return JSON only.
             $occurrences = Count-Occurrences $fileContent $proposal.search
 
             if ($occurrences -ne 1) {
+                # Malformed search string — log and bail immediately, no retries.
+                # Retrying wastes API calls: Claude would need the corrected file
+                # content to produce a valid search string anyway.
                 $searchPreview = $proposal.search.Substring(0, [Math]::Min(60, $proposal.search.Length))
                 $entry = [ordered]@{
                     id             = Get-NextTriedId
@@ -389,11 +458,19 @@ Propose ONE change targeting the most impactful error type. Return JSON only.
                     timestamp      = (Get-Date -Format 'yyyy-MM-ddTHH:mm:ssZ')
                 }
                 Append-TriedChange $entry
-                throw "Search string appears $occurrences time(s) (must be exactly 1). Logged as malformed_proposal."
+                Write-Warning "  --> Search string appears $occurrences time(s) (must be 1). Logged as malformed_proposal — skipping without retry."
+                $malformedProposal = $true
+                break
             }
 
             $validProposal = $true
         } catch {
+            $errText = "$_" + ($_.ErrorDetails?.Message ?? '')
+            if ($errText -match 'credit balance is too low' -or $errText -match 'billing') {
+                Write-Host ''
+                Write-Host '==> OUT OF CREDITS: Add credits at console.anthropic.com/settings/billing' -ForegroundColor Red
+                exit 2
+            }
             Write-Warning "  --> Proposal attempt $($retryCount + 1) failed: $_"
             $retryCount++
             if ($retryCount -ge $maxRetries) {
@@ -402,6 +479,12 @@ Propose ONE change targeting the most impactful error type. Return JSON only.
             }
             Write-Host "  --> Retrying proposal request ($retryCount/$maxRetries)..."
         }
+    }
+
+    if ($malformedProposal) {
+        # Count against MaxIterations so we don't spin forever on a stale file
+        $iteration++
+        continue
     }
 
     if (-not $validProposal) {
@@ -465,7 +548,7 @@ Propose ONE change targeting the most impactful error type. Return JSON only.
 
     if ($applyError) {
         Write-Warning "  --> Failed to apply change: $applyError"
-        & git checkout master
+        & git checkout $DefaultBranch
         & git branch -D $branchName 2>&1 | Out-Null
         Pop-Location
         $searchPreview = $proposal.search.Substring(0, [Math]::Min(60, $proposal.search.Length))
@@ -492,7 +575,7 @@ Propose ONE change targeting the most impactful error type. Return JSON only.
 
     if (-not $buildOk) {
         Write-Warning '  --> Build failed after change. Reverting.'
-        & git checkout master
+        & git checkout $DefaultBranch
         & git branch -D $branchName 2>&1 | Out-Null
         Pop-Location
         $searchPreview = $proposal.search.Substring(0, [Math]::Min(60, $proposal.search.Length))
@@ -527,7 +610,7 @@ Propose ONE change targeting the most impactful error type. Return JSON only.
     if ($newScore -gt $currentScore) {
         # WIN: merge into master
         Write-Host "  --> IMPROVEMENT! Merging $branchName into master." -ForegroundColor Green
-        & git checkout master
+        & git checkout $DefaultBranch
         $commitMsg = "loop: $branchName`: $currentScore->$newScore (+$delta) -- $($proposal.rationale)"
         & git merge --no-ff $branchName -m $commitMsg
         & git branch -D $branchName 2>&1 | Out-Null
@@ -544,7 +627,7 @@ Propose ONE change targeting the most impactful error type. Return JSON only.
     } else {
         # NO IMPROVEMENT: revert by deleting branch (master unchanged)
         Write-Host "  --> No improvement (delta=$delta). Reverting." -ForegroundColor Yellow
-        & git checkout master
+        & git checkout $DefaultBranch
         & git branch -D $branchName 2>&1 | Out-Null
         Pop-Location
 

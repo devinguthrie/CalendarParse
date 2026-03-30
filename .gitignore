@@ -92,3 +92,5 @@ calander-parse-test-imgs/
 
 # gstack security reports and session data (local only)
 .gstack/
+
+.claude/settings.local.json

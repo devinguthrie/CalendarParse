@@ -75,6 +75,7 @@ public sealed class HybridCalendarService : ICalendarParseService
     private readonly WindowsImagePreprocessor _preprocessor;
     private readonly WindowsTableDetector _tableDetector;
     private readonly WindowsWinRtOcrService _winRtOcr;
+    private readonly List<string> _sessionNames = new();
 
     public HybridCalendarService(
         string baseUrl = OllamaCalendarService.DefaultBaseUrl,
@@ -85,6 +86,14 @@ public sealed class HybridCalendarService : ICalendarParseService
         _preprocessor = new WindowsImagePreprocessor();
         _tableDetector = new WindowsTableDetector();
         _winRtOcr    = new WindowsWinRtOcrService();
+    }
+
+    /// <summary>Adds names seen in previous images so OCR supplementation can resolve fragments.</summary>
+    public void AddSessionNames(IEnumerable<string> names)
+    {
+        foreach (var n in names)
+            if (!_sessionNames.Any(s => s.Equals(n, StringComparison.OrdinalIgnoreCase)))
+                _sessionNames.Add(n);
     }
 
     public async Task<string> ProcessAsync(
@@ -106,18 +115,8 @@ public sealed class HybridCalendarService : ICalendarParseService
         Console.Error.WriteLine(
             $"    [{T()}] pass 1/4: header ({month} {year}, {dates.Count} dates)");
 
-        // ── Pass 2: employee names (LLM on full image) ────────────────────────
-        var names = await _ollama.ExtractNamesAsync(base64, ct);
-        if (_ollama._knownNames.Count > 0)
-            names = _ollama.NormalizeNamesAgainstKnown(names);
-        if (!string.IsNullOrWhiteSpace(nameFilter))
-            names = names
-                .Where(n => n.Contains(nameFilter, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-        Console.Error.WriteLine(
-            $"    [{T()}] pass 2/4: names ({names.Count} employees): {string.Join(", ", names)}");
-
         // ── WinRT OCR on original image ───────────────────────────────────────
+        // Run OCR first so we can feed name-column fragments to pass 2 as grounding.
         var ocrElements = await _winRtOcr.RecognizeAsync(rawBytes, ct);
         Console.Error.WriteLine(
             $"    [{T()}] ocr: {ocrElements.Count} elements");
@@ -132,8 +131,6 @@ public sealed class HybridCalendarService : ICalendarParseService
         }
 
         // ── Derive day column bounds from OCR day-name headers ────────────────
-        // Returns a dictionary keyed by day index (0=Sun–6=Sat) so that even if
-        // some day headers aren’t detected, the ones we do find go to the correct slot.
         var dayColBounds  = ComputeDayColBoundsFromOcr(ocrElements, imageWidth);
         bool gridReliable = dayColBounds.Count >= 4;
         {
@@ -205,6 +202,73 @@ public sealed class HybridCalendarService : ICalendarParseService
             }
         }
 
+        // ── Name column right-edge: left boundary of first day column ───────────
+        int nameXEnd = dayColBounds.Count > 0
+            ? dayColBounds.Values.Min(b => b.XStart)
+            : Math.Min(250, imageWidth);
+
+        // ── OCR name-column fragments for pass 2 grounding ────────────────────
+        // Collect raw OCR tokens from the name column, group by Y-band into per-row
+        // text snippets, then pass them to the LLM as partial-read anchors.  This
+        // helps the model reconstruct truncated names (e.g. "Brittn" → "Brittney")
+        // and notice rows that OCR detected but couldn't fully read.
+        List<string>? ocrNameFragments = null;
+        if (gridReliable)
+        {
+            int fragHeaderY = ocrElements
+                .Where(e => DayIndexMap.ContainsKey(e.Text.Trim())
+                         || DayPrefixes.Any(p => e.Text.Trim().StartsWith(p.Prefix,
+                                StringComparison.OrdinalIgnoreCase)))
+                .Select(e => e.Bounds.Y).DefaultIfEmpty(0).Min();
+
+            var fragRows = new List<(int Y, string Text)>();
+            foreach (var elem in ocrElements
+                .Where(e => e.Bounds.CenterX < nameXEnd
+                         && e.Bounds.Y > fragHeaderY + 10
+                         && e.Text.Length >= 1
+                         && Regex.IsMatch(e.Text, @"^[A-Za-z]")
+                         && !IsHeaderLike(e.Text))
+                .OrderBy(e => e.Bounds.Y))
+            {
+                int cy = elem.Bounds.CenterY;
+                var existing = fragRows.FirstOrDefault(r => Math.Abs(r.Y - cy) < 14);
+                if (existing.Text != null)
+                {
+                    int idx = fragRows.IndexOf(existing);
+                    // Concatenate tokens in the same row left-to-right
+                    fragRows[idx] = (existing.Y, existing.Text + elem.Text);
+                }
+                else fragRows.Add((cy, elem.Text));
+            }
+
+            // Filter obvious non-name rows (metric words, very short tokens)
+            var fragMetrics = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "Volume", "Hours", "SPLH", "UPT", "ADT", "inv", "Bank",
+                "Negative", "check", "Total", "Average", "Notes", "Manager"
+            };
+            ocrNameFragments = fragRows
+                .Where(r => r.Text.Length >= 2 && !fragMetrics.Contains(r.Text))
+                .Select(r => r.Text)
+                .ToList();
+        }
+
+        // ── Pass 2: employee names (LLM on full image) ────────────────────────
+        // Feed OCR name-column fragments + session names so the LLM has grounding
+        // context for reconstructing truncated or partially-visible names.
+        var sessionHints = _sessionNames.Count > 0 && _ollama._knownNames.Count == 0
+            ? _sessionNames : null;
+        var names = await _ollama.ExtractNamesAsync(base64, ct,
+            additionalHints: sessionHints, ocrNameFragments: ocrNameFragments);
+        if (_ollama._knownNames.Count > 0 || sessionHints != null)
+            names = _ollama.NormalizeNamesAgainstKnown(names, extraKnown: sessionHints);
+        if (!string.IsNullOrWhiteSpace(nameFilter))
+            names = names
+                .Where(n => n.Contains(nameFilter, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        Console.Error.WriteLine(
+            $"    [{T()}] pass 2/4: names ({names.Count} employees): {string.Join(", ", names)}");
+
         // ── OCR pre-fill: time-range strings found directly in each day column ─
         // ocrTimeMap[dayIdx][empIdx] = confirmed time-range string (or null)
         string?[][] ocrTimeMap = new string?[7][];
@@ -266,13 +330,6 @@ public sealed class HybridCalendarService : ICalendarParseService
         }
         if (ocrFilled > 0)
             Console.Error.WriteLine($"    [{T()}] ocr pre-fill: {ocrFilled} time-range cells filled directly");
-
-        // \u2500\u2500 Name column right-edge: left boundary of first day column \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-        // Use the leftmost day-column's left edge as the name column boundary.
-        // Using dayColBounds[0] (Sun) is wrong for Mon-Sun calendars where Sun is last.
-        int nameXEnd = dayColBounds.Count > 0
-            ? dayColBounds.Values.Min(b => b.XStart)
-            : Math.Min(250, imageWidth);
 
         // ── Reorder names by OCR Y-position to match visual row order ─────────
         // Pass 2's LLM may return names in KnownNames order rather than the
@@ -478,144 +535,93 @@ public sealed class HybridCalendarService : ICalendarParseService
             shiftMap[name] = shifts;
         }
 
-        // ── OCR name supplementation ──────────────────────────────────────────
-        // If the LLM missed some employees in pass 2, the name column in OCR
-        // still contains their names. Find and add them now with OCR-extracted shifts.
-        // When known names are provided we fuzzy-match fragments to full names and reject
-        // anything that doesn't match. Without known names we use heuristics to skip
-        // obvious metrics/footer rows (all-caps abbreviations, short tokens, etc.).
+        // ── OCR name supplementation + targeted LLM shift extraction ─────────
+        // Find employee names missed by LLM in pass 2 using OCR name column tokens,
+        // then run a targeted LLM query for those employees' shifts.
         if (gridReliable && dayColBounds.Count >= 4)
         {
-            // Find the header row Y-position (topmost day-name OCR token)
-            int ocrHeaderY = ocrElements
+            int suppHeaderY = ocrElements
                 .Where(e => DayIndexMap.ContainsKey(e.Text.Trim())
                          || DayPrefixes.Any(p => e.Text.Trim().StartsWith(p.Prefix,
                                 StringComparison.OrdinalIgnoreCase)))
-                .Select(e => e.Bounds.Y)
-                .DefaultIfEmpty(0)
-                .Min();
+                .Select(e => e.Bounds.Y).DefaultIfEmpty(0).Min();
 
-            // Collect name-column alphabetic tokens below the header
-            var nameColElems = ocrElements
+            var suppColElems = ocrElements
                 .Where(e => e.Bounds.CenterX < nameXEnd
-                         && e.Bounds.Y > ocrHeaderY + 10
+                         && e.Bounds.Y > suppHeaderY + 10
                          && e.Text.Length >= 2
                          && Regex.IsMatch(e.Text, @"^[A-Za-z]")
                          && !IsHeaderLike(e.Text))
-                .OrderBy(e => e.Bounds.Y)
-                .ToList();
+                .OrderBy(e => e.Bounds.Y).ToList();
 
-            // Group into Y-bands (tokens within 20px of each other → same row)
-            var nameRows = new List<(int Y, string Text)>();
-            foreach (var elem in nameColElems)
+            var suppRows = new List<(int Y, string Text)>();
+            foreach (var elem in suppColElems)
             {
                 int cy = elem.Bounds.CenterY;
-                var existing = nameRows.FirstOrDefault(r => Math.Abs(r.Y - cy) < 20);
+                var existing = suppRows.FirstOrDefault(r => Math.Abs(r.Y - cy) < 14);
                 if (existing.Text != null)
                 {
-                    int idx = nameRows.IndexOf(existing);
-                    if (elem.Text.Length > existing.Text.Length)
-                        nameRows[idx] = (existing.Y, elem.Text);
+                    int idx = suppRows.IndexOf(existing);
+                    if (elem.Text.Length > existing.Text.Length) suppRows[idx] = (existing.Y, elem.Text);
                 }
-                else
-                    nameRows.Add((cy, elem.Text));
+                else suppRows.Add((cy, elem.Text));
             }
 
-            var alreadyFound = new HashSet<string>(names, StringComparer.OrdinalIgnoreCase);
-            bool hasKnownNames = _ollama._knownNames.Count > 0;
-            // Common metrics/footer words that appear in calendar images but are not employee names
-            var metricsWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            var suppSeen = new HashSet<string>(names, StringComparer.OrdinalIgnoreCase);
+            bool suppHasKnown = _ollama._knownNames.Count > 0;
+            var suppPool = suppHasKnown
+                ? _ollama._knownNames
+                : _sessionNames.Count > 0 ? (IReadOnlyList<string>)_sessionNames : Array.Empty<string>();
+            bool suppHasPool = suppPool.Count > 0;
+            var suppMetrics = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
                 "Volume", "Hours", "SPLH", "UPT", "ADT", "inv", "Bank", "Negative",
                 "check", "Total", "Average", "Notes", "Manager", "Date", "Week"
             };
-
-            foreach (var (rowY, rowText) in nameRows)
+            foreach (var (rowY, rowText) in suppRows)
             {
-                // Skip if this OCR token is already covered by a detected name (3-char prefix)
-                bool covered = names.Any(n =>
-                {
+                bool covered = names.Any(n => {
                     string first = n.Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
-                    string prefix = first.Substring(0, Math.Min(first.Length, 3));
-                    return rowText.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+                    return rowText.StartsWith(first.Substring(0, Math.Min(first.Length, 3)), StringComparison.OrdinalIgnoreCase);
                 });
                 if (covered) continue;
 
                 string? matchedKnown = null;
-
-                if (hasKnownNames)
+                if (suppHasPool)
                 {
-                    // With known names: fuzzy-match the OCR fragment to the nearest known name.
-                    // Matches: OCR is a prefix of known name, known name contains OCR text, or
-                    //          OCR starts with first 3 chars of known name.
-                    foreach (var kn in _ollama._knownNames)
+                    foreach (var kn in suppPool)
                     {
-                        if (alreadyFound.Contains(kn)) continue;
+                        if (suppSeen.Contains(kn)) continue;
                         string knFirst = kn.Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
-                        // "Brittn" → "Brittney": OCR text is prefix of known first name (length >= 3)
-                        if (rowText.Length >= 3 && knFirst.StartsWith(rowText, StringComparison.OrdinalIgnoreCase))
+                        if (rowText.Length >= 2 && knFirst.StartsWith(rowText, StringComparison.OrdinalIgnoreCase))
                         { matchedKnown = kn; break; }
-                        // "ndee" → "Andee": known name contains the OCR fragment (length >= 3)
                         if (rowText.Length >= 3 && knFirst.Contains(rowText, StringComparison.OrdinalIgnoreCase))
                         { matchedKnown = kn; break; }
-                        // "Sarah" → "Sarah": OCR starts with first 3 chars of known name
-                        if (rowText.StartsWith(knFirst.Substring(0, Math.Min(knFirst.Length, 3)),
-                                StringComparison.OrdinalIgnoreCase) && rowText.Length >= 4)
+                        if (rowText.Length >= 3 && rowText.StartsWith(knFirst.Substring(0, Math.Min(knFirst.Length, 3)), StringComparison.OrdinalIgnoreCase))
                         { matchedKnown = kn; break; }
                     }
-                    // No known-name match → skip (e.g. metrics rows)
-                    if (matchedKnown == null) continue;
+                    // If pool match failed, fall through to heuristics (catches new employees not yet in session pool)
                 }
-                else
+                if (matchedKnown == null)
                 {
-                    // Without known names: apply heuristics to filter out non-name tokens.
-                    // Skip: all-caps abbreviations (SPLH, UPT, ADT), known metrics words,
-                    //       tokens starting with lowercase, or too short.
                     if (rowText.Length < 4) continue;
-                    if (rowText == rowText.ToUpper()) continue;       // all-caps abbreviation
-                    if (char.IsLower(rowText[0])) continue;           // lowercase-start
-                    if (metricsWords.Contains(rowText)) continue;     // known metrics word
-                    matchedKnown = rowText;  // use raw OCR text as name
+                    if (rowText == rowText.ToUpper()) continue;
+                    if (char.IsLower(rowText[0])) continue;
+                    if (suppMetrics.Contains(rowText)) continue;
+                    matchedKnown = rowText;
                 }
 
                 Console.Error.WriteLine($"    [{T()}] ocr-name-supp: adding '{matchedKnown}' (OCR '{rowText}', Y={rowY})");
                 names.Add(matchedKnown);
-                alreadyFound.Add(matchedKnown);
+                suppSeen.Add(matchedKnown);
 
-                // Extract shifts for this employee from OCR by scanning each day column
-                // at approximately the employee's Y position.
+                // Initialize empty shiftMap entry (OCR can't read styled time-range cells;
+                // empty shifts will correctly match "x" days via the "" ≡ x evaluation rule)
                 var suppShifts = new List<object>();
-                for (int colIdx = 0; colIdx < 7; colIdx++)
+                for (int i = 0; i < 7; i++)
                 {
-                    string date = colIdx < dates.Count
-                        ? OllamaCalendarService.NormalizeIsoDate(dates[colIdx])
-                        : "";
-
-                    string shiftVal = "";
-                    if (dayColBounds.TryGetValue(colIdx, out var colB))
-                    {
-                        // Look for any time-range or marker token in this column near the employee's Y.
-                        // Use wider Y tolerance (30px) since shift cells may not center-align with name text.
-                        var cellCandidates = ocrElements
-                            .Where(e => e.Bounds.CenterX >= colB.XStart
-                                     && e.Bounds.CenterX <= colB.XEnd
-                                     && Math.Abs(e.Bounds.CenterY - rowY) < 30
-                                     && !IsHeaderLike(e.Text))
-                            .OrderBy(e => Math.Abs(e.Bounds.CenterY - rowY))
-                            .ToList();
-
-                        foreach (var cand in cellCandidates)
-                        {
-                            string t = NormalizeShift(cand.Text);
-                            if (TimeRangeRegex.IsMatch(t)) { shiftVal = t; break; }
-                            if (t.Equals("x", StringComparison.OrdinalIgnoreCase)
-                             || t.Equals("xx", StringComparison.OrdinalIgnoreCase)
-                             || t.Equals("RTO", StringComparison.OrdinalIgnoreCase)
-                             || t.Equals("PTO", StringComparison.OrdinalIgnoreCase))
-                            { shiftVal = t; break; }
-                        }
-                    }
-                    suppShifts.Add(new { Date = date, Shift = shiftVal });
+                    string date = i < dates.Count ? OllamaCalendarService.NormalizeIsoDate(dates[i]) : "";
+                    suppShifts.Add(new { Date = date, Shift = "" });
                 }
                 shiftMap[matchedKnown] = suppShifts;
             }
@@ -781,6 +787,9 @@ public sealed class HybridCalendarService : ICalendarParseService
         {
             prompt =
                 "You are looking at a narrow two-column strip from a weekly work schedule image.\n" +
+                "Note: this is a photograph of a printed grid — lines may not be perfectly straight\n" +
+                "or orthogonal due to camera angle. Read each cell by visual context, not by pixel\n" +
+                "alignment alone.\n" +
                 "The LEFT column shows employee names. The RIGHT column shows their shifts " +
                 $"for {dateLabel}.\n" +
                 "The top row of the RIGHT column is a HEADER showing the day name and date — SKIP IT.\n" +
@@ -800,6 +809,8 @@ public sealed class HybridCalendarService : ICalendarParseService
             // Full-image fallback: same as OllamaCalendarService.ExtractColumnAsync
             prompt =
                 $"Look at this work schedule image. Focus ONLY on the {dateLabel} column.\n" +
+                "Note: this is a photograph of a printed grid — lines may not be perfectly straight\n" +
+                "or orthogonal due to camera angle. Read each cell by visual context.\n" +
                 $"There are exactly {names.Count} employee rows in this order: {nameList}.\n" +
                 $"The table ends at the row labeled \"{lastEmployee}\".\n" +
                 "Read each cell in that column from top to bottom, one value per employee row.\n" +
@@ -1087,4 +1098,5 @@ public sealed class HybridCalendarService : ICalendarParseService
         if (Regex.IsMatch(v, @"^\d+\.?\d*$")) return "";
         return v;
     }
+
 }

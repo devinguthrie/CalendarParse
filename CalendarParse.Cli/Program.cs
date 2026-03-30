@@ -102,6 +102,7 @@ else
     if (knownNamesArr.Length > 0)
         Console.WriteLine($"Known names: {string.Join(", ", knownNamesArr)}");
 }
+HybridCalendarService? hybridParser = parser as HybridCalendarService;
 
 // ── Batch processing ──────────────────────────────────────────────────────────
 var imageFiles = Directory.EnumerateFiles(folder, "*.*", SearchOption.TopDirectoryOnly)
@@ -199,6 +200,24 @@ foreach (var imagePath in imageFiles)
 
         // Extract just the JSON portion (after the debug report)
         string jsonOnly = ExtractJson(output);
+
+        // Feed detected names into the session pool so later images can resolve OCR fragments
+        if (hybridParser != null)
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(jsonOnly);
+                if (doc.RootElement.TryGetProperty("Employees", out var emps))
+                {
+                    var sessionNamesFromImage = emps.EnumerateArray()
+                        .Select(e => e.TryGetProperty("Name", out var n) ? n.GetString() ?? "" : "")
+                        .Where(n => n.Length >= 2)
+                        .ToList();
+                    hybridParser.AddSessionNames(sessionNamesFromImage);
+                }
+            }
+            catch { /* ignore JSON parse errors */ }
+        }
 
         await File.WriteAllTextAsync(outPath, jsonOnly);
 

@@ -349,11 +349,16 @@ public class OllamaCalendarService : ICalendarParseService
 
     // ── Names extraction ──────────────────────────────────────────────────────
 
-    internal async Task<List<string>> ExtractNamesAsync(string base64Image, CancellationToken ct)
+    internal async Task<List<string>> ExtractNamesAsync(
+        string base64Image, CancellationToken ct,
+        IReadOnlyList<string>? additionalHints = null,
+        IReadOnlyList<string>? ocrNameFragments = null)
     {
-        // P10: include known names hint so the model uses exact reference spellings
         string prompt =
             "Look at this work schedule image.\n" +
+            "Note: this is a photograph of a printed grid — the grid lines may not be perfectly\n" +
+            "straight or orthogonal due to camera angle and perspective distortion. Read each row\n" +
+            "by visual context, not pixel-perfect alignment.\n" +
             "Find the MAIN employee scheduling table (the large table at the top).\n" +
             "List every employee name from the leftmost column of that table, one name per line.\n" +
             "Go top to bottom. Stop before any secondary or totals table.\n" +
@@ -361,6 +366,18 @@ public class OllamaCalendarService : ICalendarParseService
             "Output ONLY the names — no numbers, no extra text, no punctuation.";
         if (_knownNames.Count > 0)
             prompt += $"\nKnown employee names for this schedule (if you see one of these, use this exact spelling): {string.Join(", ", _knownNames)}. Do not invent names not on this list unless they are clearly visible.";
+        if ((additionalHints?.Count ?? 0) > 0)
+            // Session hints from prior images help with spelling but are not exhaustive — the
+            // schedule may have employees not in this list, so still report everyone visible.
+            prompt += $"\nSpelling reference from related schedules (use these exact spellings if you see them, but also list ANY other names clearly visible): {string.Join(", ", additionalHints!)}.";
+        if ((ocrNameFragments?.Count ?? 0) > 0)
+            // OCR partial reads from the name column of THIS image anchor the LLM to what
+            // is actually present, including rows with unusual styling OCR couldn't fully decode.
+            prompt += $"\nOCR detected these partial text fragments from the name column of this image " +
+                      $"(they may be truncated or split): {string.Join(", ", ocrNameFragments!)}. " +
+                      "Use these as anchors — every fragment likely corresponds to an employee row. " +
+                      "Identify the full name for each fragment, and include ANY additional names " +
+                      "visually present that OCR may have missed entirely.";
 
         string raw = await CallOllamaAsync(base64Image, prompt, ct, isJson: false, numPredict: 200);
 
@@ -384,6 +401,8 @@ public class OllamaCalendarService : ICalendarParseService
         string nameList = string.Join(", ", names.Select(n => $"\"{n}\""));
         string prompt =
             "Look at this work schedule image.\n" +
+            "Note: this is a photograph of a printed grid — lines may not be perfectly straight\n" +
+            "or orthogonal due to camera angle. Read each cell by visual context.\n" +
             "For each employee listed below, identify ONLY the day columns that contain an X mark\n" +
             "or checkmark symbol — these indicate a day off. X marks may be red, black, or any color.\n" +
             $"Employees: {nameList}.\n" +
@@ -1150,10 +1169,14 @@ public class OllamaCalendarService : ICalendarParseService
     /// _knownNames (Levenshtein ≤ 2 or parenthetical-suffix strip) and deduplicates.
     /// Fixes phantom names like "Athena(train)" → "Athena" and "Clara" → "Ciara".
     /// </summary>
-    internal List<string> NormalizeNamesAgainstKnown(List<string> extracted)
+    internal List<string> NormalizeNamesAgainstKnown(
+        List<string> extracted, IReadOnlyList<string>? extraKnown = null)
     {
         var result  = new List<string>(extracted.Count);
         var claimed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var allKnown = extraKnown?.Count > 0
+            ? _knownNames.Concat(extraKnown).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
+            : _knownNames;
 
         foreach (var raw in extracted)
         {
@@ -1164,7 +1187,7 @@ public class OllamaCalendarService : ICalendarParseService
             // Find the closest known name
             string? best     = null;
             int     bestDist = int.MaxValue;
-            foreach (var known in _knownNames)
+            foreach (var known in allKnown)
             {
                 if (string.Equals(cleaned, known, StringComparison.OrdinalIgnoreCase))
                 { best = known; bestDist = 0; break; }
@@ -1183,7 +1206,7 @@ public class OllamaCalendarService : ICalendarParseService
         return result;
     }
 
-    private static int LevenshteinDist(string a, string b)
+    internal static int LevenshteinDist(string a, string b)
     {
         a = a.ToLowerInvariant(); b = b.ToLowerInvariant();
         int la = a.Length, lb = b.Length;
