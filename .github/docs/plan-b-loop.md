@@ -1,26 +1,35 @@
 # Plan B — Meta-Agent Improvement Loop
 
-_Written: 2026-03-26 (session 14). Full design in `~/.gstack/projects/devinguthrie-CalendarParse/devin-master-design-20260326-171612.md`_
+_Written: 2026-03-26 (session 14). Updated: 2026-03-29 (session 15)._
 
 ## Goal
 
-Automate the hypothesis-test-commit cycle that has been done manually across 49 phases.
-Target: push from 89.9% (151/168) to 95%+ by having a meta-agent (Claude API) generate
-prompt/heuristic changes, test them, and keep winners overnight.
+Automate the hypothesis-test-commit cycle that has been done manually across 52 phases.
+Current: 227/252 (90.1%) with no `--known-names` required.
+Target: 245/252 (97%+).
 
-## Phase A — Error Taxonomy (DONE)
+## Phase A — Error Taxonomy (UPDATED 2026-03-29)
 
-Already completed from testing-strategy.md. The 17 errors are:
-- **TIME-MISREAD (6):** Jenny Sun, Victor Tue, Kyleigh Tue, Brittney Thu, Halle Nov28, Tori Nov23
-- **X-SWAP (6):** Thu Oct30 column — Cyndee, Victor, Halle, Kyleigh, Seena, Sarah
-- **BLANK/truncation (3):** Ciara last-row — Oct29, Oct31, Nov01
-- **SPURIOUS (1):** Franny Oct28
-- **SPURIOUS (1):** Seena Oct29
+Current errors against 252-shift test set (3 images):
+
+**IM(1) — ~17 errors**:
+- Ciara last-row blank (3): Oct29, Oct31, Nov01 — LLM array truncation for last employee
+- Thu Oct30 column swaps (~5): Cyndee, Victor, Halle, Kyleigh, Seena — column boundary lands in Wed
+- TIME-MISREAD (~5): Jenny Sun, Brittney Thu, Kyleigh Thu, Halle, others
+- SPURIOUS (~2): Franny, Seena
+
+**IM(2) — 8 errors**:
+- Athena: 7 MISSING — both OCR and LLM blind to her row (trainee-row styling); hard ceiling ~3/7 even if detected
+- Tori: 3 errors (TIME-MISREAD / x-swap)
+
+**IM(3) — 1 error**:
+- Franny Sep24: single stochastic misread
 
 Systematic patterns:
-- Thu Oct30 is a bad column (6 of 15 IM1 errors)
-- TIME-MISREAD is #1 error class (35% of all failures)
-- Ciara is always last row — truncation is structural
+- **Athena invisibility** (7 of 8 IM(2) errors) — hard ceiling, structural
+- **Thu Oct30 bad column** (~5 IM(1) errors) — column boundary bug
+- **Ciara last-row truncation** (3 IM(1) errors) — structural
+- **TIME-MISREAD** (~5 errors) — LLM digit confusion
 
 ## Phase B — The Loop
 
@@ -33,6 +42,7 @@ benchmark-loop.ps1
 ├── build_context()           → errors + current prompt text + tried_changes.json
 ├── call_meta_agent()         → ProposedChange JSON (Claude API)
 ├── validate_change()         → search must match exactly 1 location in target file
+│                               EARLY EXIT on malformed (no retries — saves API calls)
 ├── apply_change()            → git checkout -b improvement-loop-{N} + string-replace
 ├── dotnet build + test       → new score
 ├── compare()
@@ -41,7 +51,7 @@ benchmark-loop.ps1
 └── loop until max_iterations or score ≥ target
 ```
 
-### Files to Create
+### Files
 
 | File | Purpose |
 |------|---------|
@@ -72,34 +82,32 @@ benchmark-loop.ps1
     "file": "CalendarParse.Cli/Services/OllamaCalendarService.cs",
     "search_preview": "<first 60 chars>",
     "rationale": "...",
-    "score_before": 151,
-    "score_after": 149,
+    "score_before": 227,
+    "score_after": 225,
     "outcome": "reverted | malformed_proposal",
-    "timestamp": "2026-03-26T22:00:00Z"
+    "timestamp": "2026-03-29T22:00:00Z"
   }
 ]
 ```
 
-### Structural Targets (highest priority)
+### Structural Targets (priority order)
 
-The meta-agent may propose any type of code change. Priority order:
-
-**1. Thu Oct30 column boundary (6 errors)** — `ComputeDayColBoundsFromOcr()` midpoint logic
-or `CropAndStitch()` left-edge calculation causes the Thu strip to overlap Wed.
+**1. Thu Oct30 column boundary (~5 errors)** — `ComputeDayColBoundsFromOcr()` midpoint logic
+or `CropAndStitch()` left-edge calculation causes the Thu strip to include part of the Wed column.
 
 **2. Ciara last-row blank (3 errors)** — strip crop height or LLM stopping one row early;
-try expanding crop, last-row prompt instruction, or `empIdx == names.Count - 1` guard.
+try expanding crop height for `empIdx == names.Count - 1`, explicit last-row prompt, or
+checking `RepairTruncatedJson()` path.
 
-**3. TIME-MISREAD (6 errors)** — strip prompt doesn't require both start AND end of range;
-also check `TrailingHours` regex for unintended truncation.
+**3. TIME-MISREAD (~5 errors)** — strip prompt doesn't require both start AND end of time
+range; also check `TrailingHours` regex for unintended truncation.
 
-**4. SPURIOUS (2 errors)** — post-processing filter for values that don't match
-time-range / x / RTO / PTO format.
+**4. Tori TIME-MISREAD (3 errors, IM(2))** — may be related to row boundary near bottom of schedule.
 
-**Numeric thresholds** (inline literals — verify exactly-once match before proposing):
+**5. Numeric thresholds** (inline literals — verify exactly-once match before proposing):
 - Holiday heuristic cutoff (currently 0.80) → try 0.70, 0.75, 0.85
 - Levenshtein distance bound (currently ≤ 2)
-- TimeRangeRegex pattern
+- Y-band grouping threshold (currently 14px) — affects name fragment grouping
 
 ### Guardrails
 
@@ -109,18 +117,19 @@ time-range / x / RTO / PTO format.
 4. **Dead-end exit** — if `max_iterations` iterations yield zero wins → write RANDOM_RESIDUAL
    to `loop-results.md`; errors are likely irreducible with prompt/heuristic changes
 5. **Merge strategy** — `git merge --no-ff` (merge commit, not squash), then `git branch -D`
-6. **Validate before apply** — if search matches 0 or >1 locations → log `malformed_proposal`,
-   request new proposal (does not count against max_iterations)
-7. **Dry-run mode** — `--dry-run` shows proposed change without applying
+6. **Malformed proposal early-exit** — if search matches 0 or >1 locations → log `malformed_proposal`,
+   immediately skip to next iteration WITHOUT retrying (saves 2 wasted API calls per malformed proposal)
+7. **JSON parse errors DO retry** — transient API/formatting issues up to `$maxRetries` times
+8. **Dry-run mode** — `-DryRun` shows proposed change without applying
 
 ### Invocation
 
 ```powershell
 # Dry-run first (verify meta-agent quality)
-.\benchmark-loop.ps1 --dry-run --max-iterations 5
+.\benchmark-loop.ps1 -DryRun
 
 # Overnight run
-.\benchmark-loop.ps1 --max-iterations 50
+.\benchmark-loop.ps1 -MaxIterations 50 -TargetScore 245
 
 # Score check after run
 Get-Content loop-results.md
@@ -128,42 +137,43 @@ Get-Content loop-results.md
 
 ### Runtime Estimate
 
-**Calibration required before first overnight run** — time one full iteration.
-Expected: ~6-12 min per iteration → 40-80 iterations overnight.
-If >20 min/iteration: extract prompts to JSON config (eliminates dotnet build time).
+~6-12 min per iteration (3 images × ~55s/image = ~2.75 min benchmark + build time).
+Expected: 40-80 iterations overnight.
 
-### Meta-Agent Prompt (abbreviated)
+**Note**: The `--known-names` flag is no longer passed by the benchmark runner — names are
+discovered dynamically. The `$KnownNames` parameter in `benchmark-loop.ps1` is preserved for
+backwards compatibility but should be removed from `Invoke-Benchmark` calls.
 
-The script sends to Claude API (claude-sonnet-4-6):
+### Meta-Agent System Prompt — Key Sections
+
+The script sends to `claude-sonnet-4-6`:
 
 ```
-Current accuracy: {N}/168 ({pct}%)
-Baseline: 151/168 (89.9%)
+Current accuracy: {N}/252 ({pct}%)
+Baseline: 227/252 (90.1%)
+Target: 245/252
 
 FAILING CELLS:
 - {employee} {day}: got "{got}" expected "{expected}" [{type}]
 ...
 
 TRIED CHANGES (do not repeat):
-- {rationale}: {description} → scored {score}/168
 ...
 
-CURRENT PROMPT for {function_name}:
+FULL CONTENT OF CalendarParse.Cli/Services/HybridCalendarService.cs:
 ---
-{prompt_text}
+{file content}
 ---
-
-RULES: Propose ONE change. Return JSON only. Target most common error type ({type}: N cases).
-Valid error types: WRONG_VALUE, WRONG_BLANK, SPURIOUS_VALUE, EXTRA_EMPLOYEE.
-Thresholds are named C# constants. Do not repeat tried changes.
 ```
 
-### Known Anti-Patterns (do not propose)
+### Known Anti-Patterns (must stay in system prompt)
 
-The meta-agent system prompt must include the anti-patterns from `next-session-plan.md`
-so it doesn't re-discover dead ends. Key ones:
-- Anti-shift warning in `ExtractColumnAsync` (harmful in single-col context)
-- Anti-shift warning at TOP of rules (−27 shifts)
+- Anti-shift warning in `ExtractColumnAsync` (harmful in single-col context; −8 shifts)
+- Anti-shift warning at TOP of rules (−27 shifts; must stay at END)
 - Vote reweighting at temp=0 (amplifies errors)
 - ISO date keys (−11 pts)
 - CSV/pipe output format (model copies examples)
+- Pass 2b / name column strip as separate LLM crop (hallucinates variant names; zero net benefit)
+- `--known-names` parameter injection (no longer architecturally needed; don't add back)
+- Image preprocessing (grayscale, CLAHE) — destroys red ink signal
+- Resize/downscale — destroys digit legibility

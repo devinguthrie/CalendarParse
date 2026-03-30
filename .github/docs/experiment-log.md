@@ -1,8 +1,8 @@
 # CalendarParse CLI — Experiment Log
 
-_Last updated: 2026-03-24 (session 13). Full verbose history in experiment-log.old.md._
+_Last updated: 2026-03-29 (session 15). Full verbose history in experiment-log.old.md._
 
-Test images: IM(1) = 11 employees, 77 shifts, Oct 26–Nov 1 2025. IM(2) = 13 employees, 91 shifts, Nov 23–29 2025. Combined = 168 shifts.
+Test images: IM(1) = 11 employees, 77 shifts, Oct 26–Nov 1 2025. IM(2) = 13 employees, 91 shifts, Nov 23–29 2025. **IM(3) = 12 employees, 84 shifts, Sep 21–27 2025.** Combined = **252 shifts**.
 
 ---
 
@@ -65,13 +65,16 @@ Test images: IM(1) = 11 employees, 77 shifts, Oct 26–Nov 1 2025. IM(2) = 13 em
 | 40 | qwen2.5vl:7b | Warning in ExtractRowAsync | — | 78.0% | NEUTRAL — fallback path not exercised |
 | 41 | qwen2.5vl:7b | CSV output for row passes | — | 54.8% | REVERTED — parse cascade |
 | 42 | qwen2.5vl:7b | Dual-view cross-reference (6th vote) | — | 70.2% | REVERTED — correlated views inject blanks |
-| 43 | qwen2.5vl:32b | P20 pipeline, CPU offload | — | 64.3% | 75 min; bigger is WORSE with offload |
+| 43 | qwen2.5vl:7b | qwen2.5vl:32b, CPU offload | — | 64.3% | 75 min; bigger is WORSE with offload |
 | 44 | qwen2.5vl:7b | Hybrid v1: OCR positional list | — | 50.6% | Positional misalignment |
 | 45 | qwen2.5vl:7b | Hybrid v2: day-keyed dictionary | — | 58.9% | +14: correct day slot mapping |
 | 46 | qwen2.5vl:7b | Hybrid v3: CropAndStitch | — | 66.7% | +13: no multi-column contamination |
 | 47 | qwen2.5vl:7b | Hybrid v4: DayPrefixes matching | — | 70.2% | +6: all 7 cols detected both images |
 | **48** | **qwen2.5vl:7b** | **Hybrid v5: ISO date cascade fix** | — | **82.1%** | **+20: largest single gain** |
-| **49** | **qwen2.5vl:7b** | **Hybrid v6: RTO/PTO holiday heuristic** | — | **89.9%** | **ALL-TIME BEST — 151/168, 2× confirmed** |
+| **49** | **qwen2.5vl:7b** | **Hybrid v6: RTO/PTO holiday heuristic** | — | **89.9% (151/168)** | **2-image all-time best with --known-names** |
+| **50** | **qwen2.5vl:7b** | **3-image test set (IM(3) added, 252 shifts)** | — | **75.4% (190/252)** | **Baseline on expanded set; no known-names** |
+| **51** | **qwen2.5vl:7b** | **Session name pool + late OCR name supplement** | — | **83.3% (210/252)** | **+20 pts; Andee/Brittney/Cyndee/Sarah/Franny recovered in IM(3)** |
+| **52** | **qwen2.5vl:7b** | **OCR fragments before pass 2 + non-orthogonal prompt** | — | **90.1% (227/252)** | **ALL-TIME BEST — no --known-names required** |
 
 ---
 
@@ -81,11 +84,15 @@ Test images: IM(1) = 11 employees, 77 shifts, Oct 26–Nov 1 2025. IM(2) = 13 em
 - **Named day keys** in JSON (Sun/Mon/…) — anchors column identity (Phase 9)
 - **3 row + 2 col majority vote** at temp=0 — complementary error correction (Phase 9c→36)
 - **X-marks binary pass** + red ink hint — resolves X-SWAP bulk errors (Phase 9e)
-- **`--known-names` injection** — eliminates NAME-SPLIT phantoms (Phase 21)
+- **`--known-names` injection** — eliminates NAME-SPLIT phantoms (Phase 21) — now superseded by dynamic discovery
 - **Anti-WRONG-COL warning at END of rules** in multi-col extraction — +13 shifts (Phase 36)
 - **temperature=0.0** — perfectly deterministic; any score change is real signal (Phase 29)
 - **Hybrid OCR+LLM**: WinRT OCR positions → column boundaries → per-day strip → single-col LLM (Phases 44–49)
 - **Holiday heuristic**: ≥80% uniform RTO/PTO column → blank all (Phase 49)
+- **Session name pool**: names extracted from earlier images in the same run accumulate and are used as spelling hints for later images (Phase 51)
+- **Late OCR name supplement**: after pass 4, OCR name-column tokens fuzzy-matched to find employees the LLM missed; added with empty shifts (Phase 51)
+- **OCR fragments before pass 2**: run WinRT OCR first, collect name-column partial reads, pass to LLM as grounding anchors — helps reconstruct fragmented names (e.g. "M"+"an" → "Megan") (Phase 52)
+- **Non-orthogonal coordinate hint**: telling the LLM the image is a photo of a grid (lines may not be straight) improves row-boundary accuracy (Phase 52)
 
 ### What never works
 - Non-JSON output formats (CSV, pipe-delimited) — model copies examples
@@ -97,6 +104,7 @@ Test images: IM(1) = 11 employees, 77 shifts, Oct 26–Nov 1 2025. IM(2) = 13 em
 - Anchor-guided re-extraction — corrupts anchor employees
 - Image downscaling — destroys fine digit legibility
 - Two-shot self-anchoring — biases away from cell reading
+- Pass 2b (name column strip as separate LLM crop) — LLM hallucinates variant names (Andrea/Cyndi) even with edit-distance filter; zero net benefit
 
 ### Critical context-sensitive rules
 - Anti-WRONG-COL warning: ✅ multi-column (`ExtractAllShiftsAsync`), ❌ single-column (`ExtractColumnAsync`)
@@ -140,9 +148,24 @@ Single CRITICAL sentence at end of `ExtractAllShiftsAsync` rules:
 | 48 | ISO date cascade fix (strip date-as-first-element) | +20 |
 | 49 | RTO/PTO uniform-column holiday heuristic (≥80% → blank) | +13 |
 
+### Phase 50 — IM(3) Added to Test Set (252 shifts total)
+Third test image: Sep 21–27 2025, 12 employees, 84 shifts. Includes Megan and Raul (unique to IM(3)) and Andee, Brittney, Cyndee, Sarah, Franny, Jenny, Victor, Halle, Kyleigh, Seena (shared with IM(1)). Baseline with --known-names and no session features: 190/252 (75.4%). Root cause: LLM pass 2 stochastically returns only 7–10 of 12 employees for IM(3).
+
+### Phase 51 — Session Name Pool + Late OCR Name Supplement (210/252 = 83.3%)
+Two complementary features:
+1. **Session name pool**: `HybridCalendarService` accumulates employee names across images in the same run (`_sessionNames`). Names from IM(1) and IM(2) are passed as `additionalHints` to pass 2 of IM(3), prompting the LLM to use those spellings and look for those employees. Soft constraint: "spelling reference — also list any other names clearly visible."
+2. **Late OCR name supplement**: After pass 4, OCR tokens from the name column are fuzzy-matched against the session pool. Names matched (Tori, Raul via prefix/contains/startswith) are added with empty shift records. Empty shifts correctly match `"x"` days via the `"" ≡ x` scorer rule.
+3. **OCR supplement fallback fix**: When the session pool exists but a token doesn't match any pool name, fall through to heuristics instead of skipping — catches employees not in any prior image.
+
+### Phase 52 — OCR Fragments Before Pass 2 + Non-Orthogonal Hint (227/252 = 90.1%)
+Two changes:
+1. **OCR moved before pass 2**: WinRT OCR now runs before the LLM name extraction call. Name-column tokens are grouped into per-row text fragments (14px Y-band) and passed as `ocrNameFragments` to `ExtractNamesAsync`. Prompt says: "OCR detected these partial text fragments from the name column of this image (they may be truncated or split): [fragments]. Use these as anchors — every fragment likely corresponds to an employee row. Identify the full name for each fragment." This lets the LLM reconstruct "M"+"an" → "Megan" and other fragmented names.
+2. **Non-orthogonal coordinate hint**: All LLM prompts (pass 2, pass 3 strip, pass 4 x-marks) now include: "Note: this is a photograph of a printed grid — the grid lines may not be perfectly straight or orthogonal due to camera angle and perspective distortion. Read each row by visual context, not pixel-perfect alignment." This improved cross-row boundary accuracy.
+
+Net result: Megan (IM(3)) 0/7 → 7/7, Raul (IM(3)) 4/7 → 7/7, Seena (IM(3)) 4/7 → 7/7 (was getting Megan's data), Sarah/Franny IM(1) each +1. No `--known-names` flag required.
+
 ### Answer.json Corrections
 - Seena Sun: 10:00-3:00 → 10:30-3:00
 - Kyleigh Tue: 9:00-1:00 → 9:30-2:00
 - Ciara Tue: "" → x
 - Victor Tue+Thu: 10:00-6:00 → 10:00-6:30
-
