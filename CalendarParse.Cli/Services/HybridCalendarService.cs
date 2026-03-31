@@ -874,14 +874,20 @@ public sealed class HybridCalendarService : ICalendarParseService
         if (result.Count > 0 && Regex.IsMatch(result[0], @"^\d{4}-\d{2}-\d{2}$"))
             result.RemoveAt(0);
 
-        // Targeted re-query: when the LLM returned exactly one fewer value than employees,
-        // the last employee was truncated.  A focused single-cell query on the same strip
-        // image recovers the missing value without changing the main prompt.
-        if (result.Count == names.Count - 1 && names.Count > 0)
+        // Targeted re-query for last employee:
+        // Case 1 — truncated array (n-1 values): LLM stopped before the last row.
+        // Case 2 — full array but last employee is blank: possible off-by-one row-swap
+        //          where the last employee's value was absorbed by the penultimate row.
+        // In both cases, a focused single-cell query on the same strip recovers the value.
+        bool needsLastRequery = names.Count > 0 && (
+            result.Count == names.Count - 1 ||
+            (result.Count >= names.Count && string.IsNullOrEmpty(result[names.Count - 1])));
+        if (needsLastRequery)
         {
             string missingEmployee = names[^1];
             string retryPrompt =
                 $"Look at this work schedule strip image.\n" +
+                $"\"{missingEmployee}\" is in the LAST employee row at the bottom of the image.\n" +
                 $"What shift does \"{missingEmployee}\" have on {dateLabel}?\n" +
                 "Reply with ONLY the shift value: a time range (e.g. 9:00-5:30), RTO, PTO, x, or \"\" for blank.\n" +
                 "No explanation, no markdown, just the value.";
@@ -889,7 +895,10 @@ public sealed class HybridCalendarService : ICalendarParseService
             string retryVal = retryRaw.Trim().Trim('"').Trim();
             retryVal = TrailingHours.Replace(retryVal, "").Trim();
             if (Regex.IsMatch(retryVal, @"^\d+\.?\d*$")) retryVal = "";
-            result.Add(retryVal);
+            if (result.Count < names.Count)
+                result.Add(retryVal);
+            else
+                result[names.Count - 1] = retryVal;
         }
 
         while (result.Count < names.Count) result.Add("");
