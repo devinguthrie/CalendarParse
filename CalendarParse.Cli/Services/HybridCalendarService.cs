@@ -879,9 +879,10 @@ public sealed class HybridCalendarService : ICalendarParseService
         // Case 2 — full array but last employee is blank: possible off-by-one row-swap
         //          where the last employee's value was absorbed by the penultimate row.
         // In both cases, a focused single-cell query on the same strip recovers the value.
+        bool wasBlankLast = result.Count >= names.Count && names.Count > 0
+                            && string.IsNullOrEmpty(result[names.Count - 1]);
         bool needsLastRequery = names.Count > 0 && (
-            result.Count == names.Count - 1 ||
-            (result.Count >= names.Count && string.IsNullOrEmpty(result[names.Count - 1])));
+            result.Count == names.Count - 1 || wasBlankLast);
         if (needsLastRequery)
         {
             string missingEmployee = names[^1];
@@ -899,6 +900,29 @@ public sealed class HybridCalendarService : ICalendarParseService
                 result.Add(retryVal);
             else
                 result[names.Count - 1] = retryVal;
+
+            // Duplicate-value anomaly: if the re-query (case 2 only) filled the last employee
+            // with the same non-trivial value already held by the penultimate employee, the
+            // penultimate employee likely absorbed the last employee's row (row-swap).
+            // Re-query the penultimate employee to recover their true value.
+            if (wasBlankLast && names.Count >= 2
+                && !string.IsNullOrEmpty(retryVal) && retryVal != "x"
+                && result.Count >= names.Count
+                && result[names.Count - 2] == retryVal)
+            {
+                string penultEmployee = names[^2];
+                string penultPrompt =
+                    $"Look at this work schedule strip image.\n" +
+                    $"\"{penultEmployee}\" is the second-to-last employee row, just ABOVE \"{missingEmployee}\".\n" +
+                    $"What shift does \"{penultEmployee}\" have on {dateLabel}?\n" +
+                    "Reply with ONLY the shift value: a time range (e.g. 9:00-5:30), RTO, PTO, x, or \"\" for blank.\n" +
+                    "No explanation, no markdown, just the value.";
+                string penultRaw = await _ollama.CallOllamaAsync(base64Image, penultPrompt, ct, numPredict: 60);
+                string penultVal = penultRaw.Trim().Trim('"').Trim();
+                penultVal = TrailingHours.Replace(penultVal, "").Trim();
+                if (Regex.IsMatch(penultVal, @"^\d+\.?\d*$")) penultVal = "";
+                result[names.Count - 2] = penultVal;
+            }
         }
 
         while (result.Count < names.Count) result.Add("");
