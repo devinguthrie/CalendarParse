@@ -38,6 +38,7 @@ public sealed class HybridCalendarService : ICalendarParseService
     private static readonly Regex TrailingHours = new(
         @"\s+\d+(\.\d+)?$", RegexOptions.Compiled);
 
+
     // Date format found in calendar header rows: M/D (e.g. "9/21") or M/D/YY (e.g. "9/21/25").
     private static readonly Regex OcrDatePattern =
         new(@"^(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?$", RegexOptions.Compiled);
@@ -269,6 +270,23 @@ public sealed class HybridCalendarService : ICalendarParseService
         Console.Error.WriteLine(
             $"    [{T()}] pass 2/4: names ({names.Count} employees): {string.Join(", ", names)}");
 
+        // ── Build early name→Y map for spatially-correct OCR pre-fill ───────────
+        // Blank/x cells produce no OCR token, so index-based assignment drifts.
+        // Instead, match each OCR time-range element to the employee whose name
+        // Y-center is spatially closest in the image.
+        var nameToYEarly = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (string name in names)
+        {
+            string first  = name.Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
+            string prefix = first.Substring(0, Math.Min(first.Length, 3));
+            var hit = ocrElements
+                .Where(e => e.Bounds.CenterX < nameXEnd + 50
+                         && e.Text.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(e => e.Bounds.Y)
+                .FirstOrDefault();
+            if (hit is not null) nameToYEarly[name] = hit.Bounds.CenterY;
+        }
+
         // ── OCR pre-fill: time-range strings found directly in each day column ─
         // ocrTimeMap[dayIdx][empIdx] = confirmed time-range string (or null)
         string?[][] ocrTimeMap = new string?[7][];
@@ -283,14 +301,26 @@ public sealed class HybridCalendarService : ICalendarParseService
                 var colOcr = ocrElements
                     .Where(e => e.Bounds.CenterX >= colXStart && e.Bounds.CenterX <= colXEnd
                              && !IsHeaderLike(e.Text))
-                    .OrderBy(e => e.Bounds.Y)
                     .ToList();
 
-                for (int empIdx = 0; empIdx < names.Count && empIdx < colOcr.Count; empIdx++)
+                foreach (var ocrEl in colOcr)
                 {
-                    string text = NormalizeShift(colOcr[empIdx].Text);
-                    if (TimeRangeRegex.IsMatch(text))
-                        ocrTimeMap[dayIdx][empIdx] = text;
+                    string text = NormalizeShift(ocrEl.Text);
+                    if (!TimeRangeRegex.IsMatch(text)) continue;
+
+                    // Spatially match this OCR element to the closest employee row.
+                    // Uses name-column Y-anchors; employees with no anchor are skipped
+                    // (they remain in needsLlm and are handled by the strip LLM pass).
+                    int bestEmpIdx = -1;
+                    int bestDist   = 40; // ~40px tolerance ≈ ¼ row height
+                    for (int empIdx = 0; empIdx < names.Count; empIdx++)
+                    {
+                        if (!nameToYEarly.TryGetValue(names[empIdx], out int empY)) continue;
+                        int dist = Math.Abs(ocrEl.Bounds.CenterY - empY);
+                        if (dist < bestDist) { bestDist = dist; bestEmpIdx = empIdx; }
+                    }
+                    if (bestEmpIdx >= 0)
+                        ocrTimeMap[dayIdx][bestEmpIdx] = text;
                 }
             }
         }
@@ -795,7 +825,7 @@ public sealed class HybridCalendarService : ICalendarParseService
                 "The top row of the RIGHT column is a HEADER showing the day name and date — SKIP IT.\n" +
                 "Do NOT output any date (like '2025-10-30' or '11/27') as a shift value — dates are NEVER shifts.\n" +
                 $"Below the header there are exactly {names.Count} employee rows in this order: {nameList}.\n" +
-                $"The table ends at the row labeled \"{lastEmployee}\".\n" +
+                $"The table ends AFTER the row labeled \"{lastEmployee}\" — that final row IS included in your output.\n" +
                 "Read ONLY the employee rows (not the header) in the RIGHT column from top to bottom.\n" +
                 "Each cell contains: a time range (e.g. 9:00-5:30), RTO, PTO, x (day off), or is blank.\n" +
                 "X marks may be in RED ink or any color — treat ANY X or checkmark as \"x\".\n" +
@@ -843,6 +873,24 @@ public sealed class HybridCalendarService : ICalendarParseService
         // remove it to realign employee rows — the padding below will fill the last slot with "".
         if (result.Count > 0 && Regex.IsMatch(result[0], @"^\d{4}-\d{2}-\d{2}$"))
             result.RemoveAt(0);
+
+        // Targeted re-query: when the LLM returned exactly one fewer value than employees,
+        // the last employee was truncated.  A focused single-cell query on the same strip
+        // image recovers the missing value without changing the main prompt.
+        if (result.Count == names.Count - 1 && names.Count > 0)
+        {
+            string missingEmployee = names[^1];
+            string retryPrompt =
+                $"Look at this work schedule strip image.\n" +
+                $"What shift does \"{missingEmployee}\" have on {dateLabel}?\n" +
+                "Reply with ONLY the shift value: a time range (e.g. 9:00-5:30), RTO, PTO, x, or \"\" for blank.\n" +
+                "No explanation, no markdown, just the value.";
+            string retryRaw = await _ollama.CallOllamaAsync(base64Image, retryPrompt, ct, numPredict: 60);
+            string retryVal = retryRaw.Trim().Trim('"').Trim();
+            retryVal = TrailingHours.Replace(retryVal, "").Trim();
+            if (Regex.IsMatch(retryVal, @"^\d+\.?\d*$")) retryVal = "";
+            result.Add(retryVal);
+        }
 
         while (result.Count < names.Count) result.Add("");
         return result.Take(names.Count).ToList();
