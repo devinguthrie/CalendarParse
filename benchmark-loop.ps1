@@ -98,7 +98,7 @@ function Invoke-Benchmark {
     Push-Location $RepoRoot
     try {
         $output = & dotnet run --project $ProjectPath --no-build -- `
-            $ImgDir --model $Model --test --known-names $KnownNames 2>&1
+            $ImgDir --model $Model --test 2>&1
     } finally {
         Pop-Location
     }
@@ -116,15 +116,26 @@ function Invoke-Benchmark {
     $total = [int]$scoreMatch.Groups[2].Value
 
     # Parse error lines: "      EmployeeName Date: got "X" expected "Y""
+    # Also parse: "      EmployeeName Date: MISSING (expected "Y")"
     $errors = @()
     foreach ($line in ($output -split "`n")) {
-        $m = [regex]::Match($line, '^\s+(\S+)\s+(.+):\s+got\s+"(.+)"\s+expected\s+"(.+)"')
+        $m = [regex]::Match($line, '^\s+(\S+)\s+(.+):\s+got\s+"(.*)"\s+expected\s+"(.*)"')
         if ($m.Success) {
             $errors += @{
                 Employee = $m.Groups[1].Value
                 Date     = $m.Groups[2].Value
                 Got      = $m.Groups[3].Value
                 Expected = $m.Groups[4].Value
+            }
+        } else {
+            $m2 = [regex]::Match($line, '^\s+(\S+)\s+(.+):\s+MISSING\s+\(expected\s+"(.*)"\)')
+            if ($m2.Success) {
+                $errors += @{
+                    Employee = $m2.Groups[1].Value
+                    Date     = $m2.Groups[2].Value
+                    Got      = 'MISSING'
+                    Expected = $m2.Groups[3].Value
+                }
             }
         }
     }
@@ -249,11 +260,22 @@ function Parse-ProposedChange($responseText) {
     $cleaned = $responseText -replace '(?s)```(?:json)?\s*', '' -replace '```', ''
     $cleaned = $cleaned.Trim()
 
-    # Find first { ... } block
-    $start = $cleaned.IndexOf('{')
-    $end   = $cleaned.LastIndexOf('}')
-    if ($start -lt 0 -or $end -le $start) {
-        throw "No JSON object found in response: $responseText"
+    # Find JSON by locating "change_type" key and working back to its enclosing '{'.
+    # Using IndexOf on "change_type" avoids being fooled by C# interpolation like
+    # {lastEmployee} that the model may emit as preamble before the actual JSON.
+    $ctIdx = $cleaned.IndexOf('"change_type"')
+    if ($ctIdx -lt 0) {
+        throw "No JSON object found in response (missing change_type key): $responseText"
+    }
+    # Walk backwards from change_type to find the opening '{'
+    $start = $ctIdx - 1
+    while ($start -ge 0 -and $cleaned[$start] -ne '{') { $start-- }
+    if ($start -lt 0) {
+        throw "No opening brace before change_type in response: $responseText"
+    }
+    $end = $cleaned.LastIndexOf('}')
+    if ($end -le $start) {
+        throw "No closing brace after change_type in response: $responseText"
     }
     $json = $cleaned.Substring($start, $end - $start + 1)
 
@@ -305,29 +327,39 @@ algorithm logic, OCR boundary calculations, crop geometry, post-processing heuri
 C# control flow. The only constraint is that your "search" string must appear exactly once
 in the target file so the replacement is unambiguous.
 
+CURRENT SCORE: 227/252 (90.1%) — 25 errors remaining.
+Test set: 3 images (IM(1)=77 shifts, IM(2)=91 shifts, IM(3)=84 shifts).
+
 KNOWN STRUCTURAL ISSUES (highest-priority targets):
 
-1. THU OCT30 X-SWAP (6 errors — Cyndee, Victor, Halle, Kyleigh, Seena, Sarah):
-   ComputeDayColBoundsFromOcr() computes column boundaries as midpoints between day-header
-   centers. For the Thu Oct30 column the boundary is landing inside the adjacent Wed column,
-   causing the strip crop to include Wed shift cells. Investigate the boundary midpoint logic
-   and the CropAndStitch() call — the left edge of the Thu strip may need to shift right.
+1. ROW-SWAP IN IM(1) THU OCT30 STRIP (~6 errors — Brittney/Cyndee/Victor/Halle/Kyleigh/Seena):
+   The per-day strip crop for Thu Oct30 is causing systematic row misalignment.
+   Cyndee gets Brittney's expected value; Halle gets Brittney's misread; Seena gets Kyleigh's value.
+   The column boundary (ComputeDayColBoundsFromOcr) uses midpoints between header centers.
+   For IM(1), Thu center=907, boundary x=[830,984]. The left edge at x=830 may include part of
+   the Wed column, or the grid line between Wed/Thu confuses row alignment.
+   Consider: shifting xStart right by a few pixels (e.g. +4 to +8), or adding left-side padding
+   to each strip crop, or adjusting the midpoint formula to be asymmetric.
 
-2. CIARA LAST-ROW BLANK (3 errors — Oct29, Oct31, Nov01):
-   Ciara is always the last employee row. Her row is physically near the bottom of the image
-   and may be cut off by the strip crop height or by the LLM stopping one row early.
-   Consider expanding the crop height for the last employee, adding explicit last-row
-   instructions to the prompt, or special-casing empIdx == names.Count - 1.
+2. ROW-SWAP IN IM(1) WED/FRI/SAT STRIPS — CIARA (3 errors — Oct29, Oct31, Nov01):
+   Ciara is the last employee (row 11). For Wed Oct29, Seena (row 10) gets Ciara's expected value
+   "12:00-4:30" and Ciara gets "". Same row-swap pattern as #1 above. This is NOT a crop-height
+   issue (full imageHeight is passed to CropAndStitch). The LLM is misaligning the last 1-2 rows.
 
-3. TIME-MISREAD (6 errors — Jenny Sun, Victor Tue, Kyleigh Tue, Brittney Thu, Halle Nov28, Tori Nov23):
-   The strip prompt does not explicitly tell the model that a time range must include BOTH
-   start AND end (e.g. "9:00-5:30", not just "9:00" or "5:30"). Also consider whether
-   TrailingHours regex is inadvertently stripping part of the time range.
+3. TIME-MISREAD (~5 errors — Jenny Sun Oct26, Kyleigh Tue Oct28, Brittney Thu Oct30, Halle Fri Nov28, Tori various):
+   The strip prompt does not tell the model that a time range MUST include BOTH start AND end
+   (e.g. "9:00-5:30" not "9:00"). The TrailingHours regex (strips "Xh" suffix) is correct.
+   Consider adding: "Time ranges always have a dash between start and end (e.g. 9:00-5:30)."
 
-4. SPURIOUS values (2 errors — Franny Oct28, Seena Oct29):
-   The model is returning a non-blank value where the answer is blank or "x".
-   Consider tightening the acceptance logic or adding a post-processing filter for
-   values that don't match the expected format (time range, x, RTO, PTO).
+4. ATHENA MISSING (7 errors — all of IM(2)):
+   OCR and LLM are both blind to Athena's row (trainee-row styling). Hard ceiling.
+   Even if name is injected, OCR can't read her shift cells.
+
+5. TORI MISREAD (3 errors — IM(2) Nov24/Nov28/Nov29):
+   TIME-MISREAD and x-swap for Tori specifically. Adjacent to bottom of IM(2) schedule.
+
+6. FRANNY STOCHASTIC (1 error — IM(3) Sep24):
+   Single stochastic misread (got "x" expected "1:30-6:00"). Likely irreducible.
 
 NEVER propose these changes (known regressions):
 - Anti-shift warnings in ExtractColumnAsync (harmful; -8 shifts)
@@ -380,8 +412,39 @@ while ($iteration -lt $MaxIterations -and $currentScore -lt $TargetScore) {
     Write-Host ''
     Write-Host "==> Iteration $($iteration + 1)/$MaxIterations  (score=$currentScore/$currentTotal)" -ForegroundColor Cyan
 
-    # ── 5a. Read file contents ────────────────────────────────────────────────
-    $hybridContent = [System.IO.File]::ReadAllText($HybridFile)
+    # ── 5a. Read file contents (only sections relevant to the meta-agent) ────
+    # Sending the full 1100-line file causes rate limit hits.  Extract only the
+    # sections the meta-agent is most likely to modify:
+    #   • class-level field/regex declarations
+    #   • OCR pre-fill and pass 3 loop
+    #   • ComputeDayColBoundsFromOcr
+    #   • CropAndStitch
+    #   • ExtractColumnFromImageAsync (strip prompt)
+    $allLines = [System.IO.File]::ReadAllLines($HybridFile)
+    $lineCount = $allLines.Length
+    $selectedLines = [System.Collections.Generic.List[string]]::new()
+    $inSection = $false
+    $lineNum = 0
+    foreach ($line in $allLines) {
+        $lineNum++
+        # Start capture regions
+        if ($line -match '(private static readonly Regex|TimeRangeRegex|TrailingHours|DayIndexMap|DayPrefixes)' -or
+            $line -match '(// ── OCR pre-fill|// ── Apply OCR pre-fills|needsLlm|CropAndStitch|ComputeDayColBoundsFromOcr|ExtractColumnFromImageAsync|// ── Column LLM query|if \(usingStrip\)|// ── Pass 3|for \(int dayIdx = 0;)') {
+            $inSection = $true
+        }
+        # Stop capture on next top-level section boundary (after initial capture)
+        if ($inSection -and $line -match '^    // ── (OCR garbage|Pass 4|OCR name|Helpers|Session name)') {
+            $inSection = $false
+        }
+        if ($inSection) {
+            $selectedLines.Add("$lineNum`: $line")
+        }
+    }
+    $hybridContent = $selectedLines -join "`n"
+    # Fallback: if extraction is too short, send full file
+    if ($selectedLines.Count -lt 50) {
+        $hybridContent = [System.IO.File]::ReadAllText($HybridFile)
+    }
 
     # ── 5b. Build meta-agent user prompt ─────────────────────────────────────
     $pctStr    = [math]::Round(($currentScore / $currentTotal) * 100, 1)
@@ -389,18 +452,20 @@ while ($iteration -lt $MaxIterations -and $currentScore -lt $TargetScore) {
 
     # Cap tried_changes to the last 20 entries to keep token count bounded
     $triedAll  = @(Read-TriedChanges)
-    $triedRecent = if ($triedAll.Count -gt 20) { $triedAll[-20..-1] } else { $triedAll }
-    $triedList = $triedRecent | ConvertTo-Json -Depth 5
+    $triedAllCount = $triedAll.Count
+    $triedRecent = @(if ($triedAllCount -gt 20) { $triedAll[-20..-1] } else { $triedAll })
+    $triedRecentCount = $triedRecent.Count
+    $triedList = if ($triedRecentCount -gt 0) { $triedRecent | ConvertTo-Json -Depth 5 } else { '[]' }
 
     $UserPrompt = @"
 Current accuracy: $currentScore/$currentTotal ($pctStr%)
-Baseline: 153/168 (91.1%)
-Target: 160/168 (95.2%)
+Baseline: 227/252 (90.1%)
+Target: 245/252 (97.2%)
 
 FAILING CELLS:
 $errorList
 
-TRIED CHANGES — last $($triedRecent.Count) of $($triedAll.Count) (do not repeat):
+TRIED CHANGES — last $triedRecentCount of $triedAllCount (do not repeat):
 $triedList
 
 FULL CONTENT OF CalendarParse.Cli/Services/HybridCalendarService.cs:

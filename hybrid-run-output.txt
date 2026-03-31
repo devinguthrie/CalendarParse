@@ -1,0 +1,128 @@
+Mode: HYBRID (Ollama model: qwen2.5vl:7b + WinRT OCR + grid crop)
+Found 3 image(s) in CalendarParse\calander-parse-test-imgs
+Mode: TEST (writing .guess.json, comparing against .answer.json)
+
+  IM (1).jpg ...     [+10s] pass 1/4: header (October 2025, 7 dates)
+    [+10s] ocr: 119 elements
+    [col-bounds] day 0 center=285 x=[205,363] w=158
+    [col-bounds] day 1 center=442 x=[363,520] w=157
+    [col-bounds] day 2 center=598 x=[520,676] w=156
+    [col-bounds] day 3 center=754 x=[676,830] w=154
+    [col-bounds] day 4 center=907 x=[830,984] w=154
+    [col-bounds] day 5 center=1061 x=[984,1138] w=154
+    [col-bounds] day 6 center=1216 x=[1138,1296] w=158
+    [+11s] ocr-cols: 7 day columns located (Sun,Mon,Tue,Wed,Thu,Fri,Sat), reliable=True
+    [+13s] pass 2/4: names (11 employees): Andee, Brittney, Cyndee, Sarah, Franny, Jenny, Victor, Halle, Kyleigh, Seena, Ciara
+    [+13s] ocr pre-fill: 2 time-range cells filled directly
+    [+13s] name-ocr-y: found 6/11 — Andee=267, Brittney=?, Cyndee=?, Sarah=319, Franny=335, Jenny=365, Victor=381, Halle=397, Kyleigh=?, Seena=?, Ciara=?
+    [+18s] pass 3/4: day 0 (Sun) — strip LLM
+    [+21s] pass 3/4: day 1 (Mon) — strip LLM
+    [+30s] pass 3/4: day 2 (Tue) — strip LLM
+    [+46s] pass 3/4: day 3 (Wed) — strip LLM
+    [+49s] pass 3/4: day 4 (Thu) — strip LLM
+    [+61s] pass 3/4: day 5 (Fri) — strip LLM
+    [+73s] pass 3/4: day 6 (Sat) — strip LLM
+    [+83s] pass 4/4: x-marks done
+OK  (11 employees → IM (1).output.json)  [85.0s]
+  IM (2).jpg ...     [+10s] pass 1/4: header (November 2025, 7 dates)
+    [+10s] ocr: 158 elements
+    [col-bounds] day 0 center=170 x=[90,258] w=168
+    [col-bounds] day 1 center=346 x=[258,435] w=177
+    [col-bounds] day 2 center=525 x=[435,613] w=178
+    [col-bounds] day 3 center=701 x=[613,789] w=176
+    [col-bounds] day 4 center=878 x=[789,968] w=179
+    [col-bounds] day 5 center=1059 x=[968,1151] w=183
+    [col-bounds] day 6 center=1243 x=[1151,1323] w=172
+    [+10s] ocr-cols: 7 day columns located (Sun,Mon,Tue,Wed,Thu,Fri,Sat), reliable=True
+    [+12s] pass 2/4: names (12 employees): Andee, Brittney, Cyndee, Sarah, Franny, Jenny, Victor, Halle, Kyleigh, Seena, Ciara, Tori
+    [+12s] ocr pre-fill: 2 time-range cells filled directly
+    [+12s] name-ocr-y: found 9/12 — Andee=237, Brittney=257, Cyndee=?, Sarah=297, Franny=316, Jenny=351, Victor=?, Halle=389, Kyleigh=?, Seena=427, Ciara=446, Tori=489
+    [+18s] pass 3/4: day 0 (Sun) — strip LLM
+    [+23s] pass 3/4: day 1 (Mon) — strip LLM
+    [+28s] pass 3/4: day 2 (Tue) — strip LLM
+    [+33s] pass 3/4: day 3 (Wed) — strip LLM
+    [+35s] pass 3/4: day 4 (Thu) — strip LLM
+    [+41s] pass 3/4: day 5 (Fri) — strip LLM
+    [+47s] pass 3/4: day 6 (Sat) — strip LLM
+    [+56s] pass 4/4: x-marks done
+OK  (12 employees → IM (2).output.json)  [56.5s]
+  IM (3).jpg ...     [+10s] pass 1/4: header (January 2025, 7 dates)
+    [+10s] ocr: 136 elements
+    [col-interp] day 3 center=732 (interpolated from day 2..4)
+    [col-bounds] day 0 center=274 x=[194,349] w=155
+    [col-bounds] day 1 center=425 x=[349,501] w=152
+    [col-bounds] day 2 center=578 x=[501,655] w=154
+    [col-bounds] day 3 center=732 x=[655,809] w=154
+    [col-bounds] day 4 center=886 x=[809,963] w=154
+    [col-bounds] day 5 center=1041 x=[963,1119] w=156
+    [col-bounds] day 6 center=1197 x=[1119,1277] w=158
+    [+10s] ocr-cols: 7 day columns located (Sun,Mon,Tue,Wed,Thu,Fri,Sat), reliable=True
+    [+10s] ocr-dates: override LLM (January 2025) → OCR (September 2025), 7/7 dates (ocrYear=2025)
+    [+12s] pass 2/4: names (12 employees): Andee, Brittney, Cyndee, Sarah, Franny, Jenny, Victor, Raul, Halle, Kyleigh, Megan, Seena
+    [+12s] name-ocr-y: found 8/12 — Andee=?, Brittney=241, Cyndee=?, Sarah=276, Franny=293, Jenny=324, Victor=341, Raul=358, Halle=376, Kyleigh=?, Megan=?, Seena=428
+    [+17s] pass 3/4: day 0 (Sun) — strip LLM
+    [+21s] pass 3/4: day 1 (Mon) — strip LLM
+    [+24s] pass 3/4: day 2 (Tue) — strip LLM
+    [+28s] pass 3/4: day 3 (Wed) — strip LLM
+    [+32s] pass 3/4: day 4 (Thu) — strip LLM
+    [+37s] pass 3/4: day 5 (Fri) — strip LLM
+    [+42s] pass 3/4: day 6 (Sat) — strip LLM
+    [+57s] pass 4/4: x-marks done
+OK  (12 employees → IM (3).output.json)  [57.1s]
+
+── Summary ─────────────────────────────────────────────────
+  ✓ IM (1).jpg                               11 employees  85.0s
+  ✓ IM (2).jpg                               12 employees  56.5s
+  ✓ IM (3).jpg                               12 employees  57.1s
+
+  3 succeeded, 0 failed
+
+── Test Results ─────────────────────────────────────────────
+  ✗ IM (1).jpg                               67/77 shifts correct
+      Brittney 2025-10-30: got "10:00-6:30" expected "9:00-5:30"
+      Cyndee 2025-10-30: got "9:00-5:30" expected "x"
+      Sarah 2025-11-01: got "10:00-4:30" expected "12:00-8:30"
+      Jenny 2025-10-26: got "10:30-6:00" expected "9:30-6:30"
+      Victor 2025-10-30: got "x" expected "10:00-6:00"
+      Halle 2025-10-30: got "10:00-6:30" expected "x"
+      Kyleigh 2025-10-28: got "9:30-6:00" expected "9:30-2:00"
+      Kyleigh 2025-10-30: got "x" expected "9:30-6:00"
+      Seena 2025-10-30: got "9:30-6:00" expected "x"
+      Ciara 2025-11-01: got "9:30-2:00" expected "12:00-5:30"
+  ✗ IM (2).jpg                               78/91 shifts correct
+      Brittney 2025-11-29: got "12:00-4:30" expected "9:00-5:30"
+      Halle 2025-11-28: got "12:00-4:30" expected "11:00-7:30"
+      Ciara 2025-11-26: got "12:00-4:30" expected "x"
+      Athena 2025-11-23: MISSING (expected "12:00-4:30")
+      Athena 2025-11-24: MISSING (expected "x")
+      Athena 2025-11-25: MISSING (expected "x")
+      Athena 2025-11-26: MISSING (expected "12:00-4:30")
+      Athena 2025-11-27: MISSING (expected "")
+      Athena 2025-11-28: MISSING (expected "10:00-6:30")
+      Athena 2025-11-29: MISSING (expected "10:00-2:30")
+      Tori 2025-11-24: got "x" expected "10:00-6:30"
+      Tori 2025-11-28: got "10:00-6:30" expected "11:00-7:30"
+      Tori 2025-11-29: got "10:00-2:30" expected "12:00-8:30"
+  ✗ IM (3).jpg                               83/84 shifts correct
+      Franny 2025-09-24: got "x" expected "1:30-6:00"
+
+  Overall: 228/252 shifts matched (90.5%)
+
+── Per-Employee Score ────────────────────────────────────────
+  Employee              IM (1)          IM (2)          IM (3)          Total       
+  ----------------------------------------------------------------------------------
+  Andee                 7/7 (100%)      7/7 (100%)      7/7 (100%)      21/21 (100%)
+  Athena                -               0/7 (0%)        -               0/7 (0%)
+  Brittney              6/7 (86%)       6/7 (86%)       7/7 (100%)      19/21 (90%)
+  Ciara                 6/7 (86%)       6/7 (86%)       -               12/14 (86%)
+  Cyndee                6/7 (86%)       7/7 (100%)      7/7 (100%)      20/21 (95%)
+  Franny                7/7 (100%)      7/7 (100%)      6/7 (86%)       20/21 (95%)  ◄
+  Halle                 6/7 (86%)       6/7 (86%)       7/7 (100%)      19/21 (90%)
+  Jenny                 6/7 (86%)       7/7 (100%)      7/7 (100%)      20/21 (95%)
+  Kyleigh               5/7 (71%)       7/7 (100%)      7/7 (100%)      19/21 (90%)
+  Megan                 -               -               7/7 (100%)      7/7 (100%)
+  Raul                  -               -               7/7 (100%)      7/7 (100%)
+  Sarah                 6/7 (86%)       7/7 (100%)      7/7 (100%)      20/21 (95%)
+  Seena                 6/7 (86%)       7/7 (100%)      7/7 (100%)      20/21 (95%)
+  Tori                  -               4/7 (57%)       -               4/7 (57%)
+  Victor                6/7 (86%)       7/7 (100%)      7/7 (100%)      20/21 (95%)

@@ -1,35 +1,37 @@
 # Plan B — Meta-Agent Improvement Loop
 
-_Written: 2026-03-26 (session 14). Updated: 2026-03-29 (session 15)._
+_Written: 2026-03-26 (session 14). Updated: 2026-03-30 (session 16)._
 
 ## Goal
 
 Automate the hypothesis-test-commit cycle that has been done manually across 52 phases.
-Current: 227/252 (90.1%) with no `--known-names` required.
+Current: 230/252 (91.3%) with no `--known-names` required.
 Target: 245/252 (97%+).
 
-## Phase A — Error Taxonomy (UPDATED 2026-03-29)
+## Phase A — Error Taxonomy (UPDATED 2026-03-30)
 
 Current errors against 252-shift test set (3 images):
 
-**IM(1) — ~17 errors**:
-- Ciara last-row blank (3): Oct29, Oct31, Nov01 — LLM array truncation for last employee
-- Thu Oct30 column swaps (~5): Cyndee, Victor, Halle, Kyleigh, Seena — column boundary lands in Wed
-- TIME-MISREAD (~5): Jenny Sun, Brittney Thu, Kyleigh Thu, Halle, others
-- SPURIOUS (~2): Franny, Seena
+**IM(1) — 9 errors**:
+- Thu Oct30 column swaps (6): Cyndee, Victor, Halle, Kyleigh, Seena, Brittney — column boundary lands in Wed
+- Ciara Nov01 blank (1): re-query fires but returns wrong time "9:30-2:00"; structural
+- Jenny Oct26 TIME-MISREAD (1): Sun shift digit confusion
+- Kyleigh Oct28 x/shift swap (1)
 
-**IM(2) — 8 errors**:
+**IM(2) — 12 errors**:
 - Athena: 7 MISSING — both OCR and LLM blind to her row (trainee-row styling); hard ceiling ~3/7 even if detected
 - Tori: 3 errors (TIME-MISREAD / x-swap)
+- Halle Nov28: 1 TIME-MISREAD
+- Ciara Nov26: 1 x/shift swap
 
 **IM(3) — 1 error**:
 - Franny Sep24: single stochastic misread
 
 Systematic patterns:
-- **Athena invisibility** (7 of 8 IM(2) errors) — hard ceiling, structural
-- **Thu Oct30 bad column** (~5 IM(1) errors) — column boundary bug
-- **Ciara last-row truncation** (3 IM(1) errors) — structural
-- **TIME-MISREAD** (~5 errors) — LLM digit confusion
+- **Athena invisibility** (7 of 12 IM(2) errors) — hard ceiling, structural
+- **Thu Oct30 bad column** (6 IM(1) errors) — `ComputeDayColBoundsFromOcr()` midpoint bug
+- **Ciara/Tori individual misreads** (5 errors) — last-row and row-boundary issues
+- **TIME-MISREAD** (~3 errors) — LLM digit confusion
 
 ## Phase B — The Loop
 
@@ -92,22 +94,33 @@ benchmark-loop.ps1
 
 ### Structural Targets (priority order)
 
-**1. Thu Oct30 column boundary (~5 errors)** — `ComputeDayColBoundsFromOcr()` midpoint logic
+**1. Thu Oct30 column boundary (6 errors)** — `ComputeDayColBoundsFromOcr()` midpoint logic
 or `CropAndStitch()` left-edge calculation causes the Thu strip to include part of the Wed column.
+This is the single largest winnable cluster. Inspect the midpoint calculation for the Oct30 day.
 
-**2. Ciara last-row blank (3 errors)** — strip crop height or LLM stopping one row early;
-try expanding crop height for `empIdx == names.Count - 1`, explicit last-row prompt, or
-checking `RepairTruncatedJson()` path.
+**2. Ciara Nov01 blank (1 error)** — last-employee re-query fires correctly but returns
+"9:30-2:00" instead of "12:00-5:30"; the strip crop for that column may need to be expanded
+downward by a few pixels so the bottom row is fully visible.
 
-**3. TIME-MISREAD (~5 errors)** — strip prompt doesn't require both start AND end of time
-range; also check `TrailingHours` regex for unintended truncation.
+**3. Tori TIME-MISREAD (3 errors, IM(2))** — may be related to row boundary near bottom of
+schedule. Re-query changes are safer than main strip prompt changes (Tori is sensitive).
 
-**4. Tori TIME-MISREAD (3 errors, IM(2))** — may be related to row boundary near bottom of schedule.
+**4. TIME-MISREAD (individual: Jenny, Halle, Kyleigh)** — strip prompt doesn't require both
+start AND end of time range; also check `TrailingHours` regex for unintended truncation.
 
 **5. Numeric thresholds** (inline literals — verify exactly-once match before proposing):
 - Holiday heuristic cutoff (currently 0.80) → try 0.70, 0.75, 0.85
 - Levenshtein distance bound (currently ≤ 2)
 - Y-band grouping threshold (currently 14px) — affects name fragment grouping
+
+### Known Loop Failure Mode — Malformed Proposals
+
+All 12 benchmark-loop iterations to date produced `malformed_proposal` outcomes. The meta-agent
+generates `search` strings that either don't exist or appear more than once in `HybridCalendarService.cs`.
+The system prompt needs to be updated with:
+1. The current 22-error taxonomy (replacing the stale 25-error one)
+2. Explicit instruction to use short, unique anchor strings (method names, not prose)
+3. Warning that search must match EXACTLY ONCE — use surrounding context if needed
 
 ### Guardrails
 

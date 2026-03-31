@@ -1,1 +1,134 @@
-[]
+[
+  {
+    "id": 1,
+    "change_type": "crop_geometry",
+    "file": "CalendarParse.Cli/Services/HybridCalendarService.cs",
+    "search_preview": "            if (usingStrip)\n            {\n                //",
+    "rationale": "Shifting the left edge of each day-column strip crop inward by 6 pixels avoids including the grid line or trailing pixels from the adjacent column, which was causing systematic row misalignment in the LLM's spatial parsing of the Thu Oct30 strip.",
+    "score_before": 227,
+    "score_after": 227,
+    "outcome": "malformed_proposal",
+    "timestamp": "2026-03-30T00:39:45Z"
+  },
+  {
+    "id": 2.0,
+    "change_type": "prompt_string",
+    "file": "CalendarParse.Cli/Services/HybridCalendarService.cs",
+    "search_preview": "\"Each cell contains: a time range (e.g. 9:00-5:30), RTO, PTO",
+    "rationale": "Adding an explicit instruction that time ranges must include both start and end times separated by a dash prevents the model from truncating ranges like '9:00-5:30' to just '9:00' or misreading them, targeting the TIME-MISREAD errors for Jenny, Kyleigh, Brittney, and Tori.",
+    "score_before": 227,
+    "score_after": 227,
+    "outcome": "malformed_proposal",
+    "timestamp": "2026-03-30T00:39:56Z"
+  },
+  {
+    "id": 3.0,
+    "change_type": "prompt_string",
+    "file": "CalendarParse.Cli/Services/HybridCalendarService.cs",
+    "search_preview": "\"Each cell contains: a time range (e.g. 9:00-5:30), RTO, PTO",
+    "rationale": "Adding an explicit instruction that time ranges must always include both start and end times separated by a dash prevents the model from outputting truncated ranges like '9:00' instead of '9:00-5:30', targeting the TIME-MISREAD errors for Jenny, Kyleigh, Brittney, and Tori.",
+    "score_before": 227,
+    "score_after": 227,
+    "outcome": "malformed_proposal",
+    "timestamp": "2026-03-30T00:42:02Z"
+  },
+  {
+    "id": 4.0,
+    "change_type": "prompt_string",
+    "file": "CalendarParse.Cli/Services/HybridCalendarService.cs",
+    "search_preview": "\"Each cell contains: a time range (e.g. 9:00-5:30), RTO, PTO",
+    "rationale": "Adding an explicit instruction that time ranges must always include both start AND end times separated by a dash prevents the model from outputting truncated ranges like '9:30-6:00' when the actual value is '9:30-2:00', targeting TIME-MISREAD errors for Jenny, Kyleigh, Brittney, Tori, and Halle.",
+    "score_before": 227,
+    "score_after": 227,
+    "outcome": "malformed_proposal",
+    "timestamp": "2026-03-30T00:44:01Z"
+  },
+  {
+    "id": 5.0,
+    "change_type": "prompt_string",
+    "file": "CalendarParse.Cli/Services/HybridCalendarService.cs",
+    "search_preview": "\"Each cell contains: a time range (e.g. 9:00-5:30), RTO, PTO",
+    "rationale": "Adding an explicit instruction that time ranges must always include both start AND end times with a dash prevents the model from truncating ranges (e.g. outputting '9:30-6:00' when the actual value is '9:30-2:00'), targeting TIME-MISREAD errors for Jenny, Kyleigh, Brittney, Tori, and Halle.",
+    "score_before": 227,
+    "score_after": 227,
+    "outcome": "malformed_proposal",
+    "timestamp": "2026-03-30T00:47:32Z"
+  },
+  {
+    "id": 6.0,
+    "change_type": "prompt_string",
+    "file": "CalendarParse.Cli/Services/HybridCalendarService.cs",
+    "search_preview": "\"Each cell contains: a time range (e.g. 9:00-5:30), RTO, PTO",
+    "rationale": "Adding an explicit instruction that time ranges must include both start AND end times with a dash, emphasizing accurate end-time reading, targets the TIME-MISREAD errors where the model outputs incorrect end times (e.g. '9:30-6:00' instead of '9:30-2:00' for Kyleigh, '10:30-6:00' instead of '9:30-6:30' for Jenny).",
+    "score_before": 227,
+    "score_after": 227,
+    "outcome": "malformed_proposal",
+    "timestamp": "2026-03-30T00:48:08Z"
+  },
+  {
+    "id": 7.0,
+    "change_type": "prompt_string",
+    "file": "CalendarParse.Cli/Services/HybridCalendarService.cs",
+    "search_preview": "\"The top row of the RIGHT column is a HEADER showing the day",
+    "rationale": "Adding an explicit instruction that time ranges must include both start AND end times, with emphasis on reading the end time carefully, targets the TIME-MISREAD errors where the model outputs wrong end times (e.g. '9:30-6:00' instead of '9:30-2:00' for Kyleigh, '10:30-6:00' instead of '9:30-6:30' for Jenny).",
+    "score_before": 227,
+    "score_after": 227,
+    "outcome": "malformed_proposal",
+    "timestamp": "2026-03-30T00:49:30Z"
+  },
+  {
+    "id": 8.0,
+    "change_type": "prompt_string",
+    "file": "CalendarParse.Cli/Services/HybridCalendarService.cs",
+    "search_preview": "\"Each cell contains: a time range (e.g. 9:00-5:30), RTO, PTO",
+    "rationale": "Adding an explicit instruction to read the end time carefully and emphasizing that both start and end times must be read accurately targets the TIME-MISREAD errors where the model outputs wrong end times (e.g. '9:30-6:00' instead of '9:30-2:00' for Kyleigh, '10:30-6:00' instead of '9:30-6:30' for Jenny).",
+    "score_before": 227,
+    "score_after": 227,
+    "outcome": "malformed_proposal",
+    "timestamp": "2026-03-30T00:49:44Z"
+  },
+  {
+    "id": 9.0,
+    "change_type": "prompt_string",
+    "file": "CalendarParse.Cli/Services/HybridCalendarService.cs",
+    "search_preview": "\"Each cell contains: a time range (e.g. 9:00-5:30), RTO, PTO",
+    "rationale": "Adding explicit instructions that time ranges must include both start AND end times with a dash, and to read both carefully, targets the TIME-MISREAD errors where the model outputs truncated or wrong ranges (e.g. '9:30-6:00' instead of '9:30-2:00' for Kyleigh, '10:30-6:00' instead of '9:30-6:30' for Jenny).",
+    "score_before": 227,
+    "score_after": 227,
+    "outcome": "malformed_proposal",
+    "timestamp": "2026-03-30T00:53:54Z"
+  },
+  {
+    "id": 10.0,
+    "change_type": "prompt_string",
+    "file": "CalendarParse.Cli/Services/HybridCalendarService.cs",
+    "search_preview": "Read ONLY the employee rows (not the header) in the RIGHT co",
+    "rationale": "Ciara (the last employee) is consistently getting blank results because the LLM stops reading before the final row; explicitly instructing the model to output a value for every employee including the last one should prevent the off-by-one row dropout causing the WRONG_BLANK errors for Ciara on Oct29, Oct31, Nov01.",
+    "score_before": 227,
+    "score_after": 227,
+    "outcome": "malformed_proposal",
+    "timestamp": "2026-03-30T00:55:14Z"
+  },
+  {
+    "id": 11.0,
+    "change_type": "prompt_string",
+    "file": "CalendarParse.Cli/Services/HybridCalendarService.cs",
+    "search_preview": "Read ONLY the employee rows (not the header) in the RIGHT co",
+    "rationale": "Ciara (last employee) consistently gets blank results because the LLM stops before outputting the final row; adding an explicit instruction that every employee including the last must have a value in the output array should fix the 3 WRONG_BLANK errors for Ciara on Oct29, Oct31, Nov01.",
+    "score_before": 227,
+    "score_after": 227,
+    "outcome": "malformed_proposal",
+    "timestamp": "2026-03-30T00:58:23Z"
+  },
+  {
+    "id": 12.0,
+    "change_type": "prompt_string",
+    "file": "CalendarParse.Cli/Services/HybridCalendarService.cs",
+    "search_preview": "\"Each cell contains: a time range (e.g. 9:00-5:30), RTO, PTO",
+    "rationale": "Adds explicit instructions that (1) time ranges must include both start and end times (fixing TIME-MISREAD errors for Jenny/Kyleigh/Brittney/Tori/Halle) and (2) the output array must have exactly N entries including the last employee by name (fixing WRONG_BLANK errors for Ciara on Oct29/Oct31/Nov01).",
+    "score_before": 227,
+    "score_after": 227,
+    "outcome": "malformed_proposal",
+    "timestamp": "2026-03-30T01:00:02Z"
+  }
+]

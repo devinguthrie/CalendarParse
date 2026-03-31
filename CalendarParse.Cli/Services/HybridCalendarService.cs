@@ -39,6 +39,7 @@ public sealed class HybridCalendarService : ICalendarParseService
         @"\s+\d+(\.\d+)?$", RegexOptions.Compiled);
 
 
+
     // Date format found in calendar header rows: M/D (e.g. "9/21") or M/D/YY (e.g. "9/21/25").
     private static readonly Regex OcrDatePattern =
         new(@"^(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?$", RegexOptions.Compiled);
@@ -311,8 +312,9 @@ public sealed class HybridCalendarService : ICalendarParseService
                     // Spatially match this OCR element to the closest employee row.
                     // Uses name-column Y-anchors; employees with no anchor are skipped
                     // (they remain in needsLlm and are handled by the strip LLM pass).
+                    // 20px ≈ ½ row height: tight enough to exclude invisible rows like Athena's.
                     int bestEmpIdx = -1;
-                    int bestDist   = 40; // ~40px tolerance ≈ ¼ row height
+                    int bestDist   = 20;
                     for (int empIdx = 0; empIdx < names.Count; empIdx++)
                     {
                         if (!nameToYEarly.TryGetValue(names[empIdx], out int empY)) continue;
