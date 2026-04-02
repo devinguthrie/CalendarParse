@@ -681,10 +681,20 @@ Propose ONE change targeting the most impactful error type. Return JSON only.
         & git branch -D $branchName 2>&1 | Out-Null
         Pop-Location
 
-        # Append win row to loop-results.md
-        $mdRow = "| $($iteration + 1) | $currentScore/$($newResult.Total) → $newScore/$($newResult.Total) | +$delta | $($proposal.file) | $($proposal.rationale) | $timestamp |"
-        Add-Content -Path $ResultsFile -Value $mdRow -Encoding UTF8
-        Write-Host "  --> loop-results.md updated." -ForegroundColor Green
+        # Log win to tried_changes.json
+        $entry = [ordered]@{
+            id             = Get-NextTriedId
+            change_type    = $proposal.change_type
+            file           = $proposal.file
+            search_preview = $searchPreview
+            rationale      = $proposal.rationale
+            score_before   = $currentScore
+            score_after    = $newScore
+            outcome        = 'committed'
+            timestamp      = $timestamp
+        }
+        Append-TriedChange $entry
+        Write-Host "  --> tried_changes.json updated (committed)." -ForegroundColor Green
 
         $currentScore  = $newScore
         $currentErrors = $newResult.Errors
@@ -725,9 +735,7 @@ Write-Host "    Final score: $currentScore/$currentTotal ($finalPct%)" -Foregrou
 Write-Host '======================================================' -ForegroundColor Cyan
 
 if ($wins -eq 0 -and $iteration -ge $MaxIterations) {
-    $note = "`n> **RANDOM_RESIDUAL**: $MaxIterations iterations yielded zero wins. Errors may be irreducible with prompt-only changes."
-    Add-Content -Path $ResultsFile -Value $note -Encoding UTF8
-    Write-Host '==> RANDOM_RESIDUAL note written to loop-results.md.' -ForegroundColor Red
+    Write-Host '==> RANDOM_RESIDUAL: zero wins after max iterations. Errors may be irreducible with prompt-only changes.' -ForegroundColor Red
 }
 
 if ($currentScore -ge $TargetScore) {

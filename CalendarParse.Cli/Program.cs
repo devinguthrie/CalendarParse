@@ -19,12 +19,9 @@ string folder = args[0];
 string nameFilter    = string.Empty;
 bool   testMode      = false;
 bool   visionMode    = false;
-bool   halvesMode    = false;
-int    resizeWidth   = 0;
 string ollamaModel    = OllamaCalendarService.DefaultModel;
 string preprocessArg  = string.Empty;
 string knownNamesArg  = string.Empty;
-string ensembleModel  = string.Empty;
 
 for (int i = 1; i < args.Length; i++)
 {
@@ -38,14 +35,8 @@ for (int i = 1; i < args.Length; i++)
         ollamaModel = args[++i];
     else if (args[i] is "--preprocess" && i + 1 < args.Length)
         preprocessArg = args[++i];
-    else if (args[i] is "--resize" && i + 1 < args.Length)
-        int.TryParse(args[++i], out resizeWidth);
-    else if (args[i] is "--halves")
-        halvesMode = true;
     else if (args[i] is "--known-names" && i + 1 < args.Length)
         knownNamesArg = args[++i];
-    else if (args[i] is "--ensemble" && i + 1 < args.Length)
-        ensembleModel = args[++i];
 }
 
 PreprocessMode preprocessMode = PreprocessMode.None;
@@ -64,18 +55,6 @@ if (!Directory.Exists(folder))
     return 1;
 }
 
-// ── Validate flag combinations ────────────────────────────────────────────────
-if (halvesMode && !visionMode)
-{
-    Console.Error.WriteLine("ERROR: --halves requires --vision");
-    return 1;
-}
-if (!string.IsNullOrEmpty(ensembleModel) && !visionMode)
-{
-    Console.Error.WriteLine("ERROR: --ensemble requires --vision");
-    return 1;
-}
-
 // ── Service wiring ────────────────────────────────────────────────────────────
 ICalendarParseService parser;
 var preprocessorInst = new WindowsImagePreprocessor();
@@ -90,8 +69,6 @@ if (visionMode)
     Console.WriteLine($"Mode: VISION (Ollama model: {ollamaModel})");
     if (knownNamesArr.Length > 0)
         Console.WriteLine($"Known names: {string.Join(", ", knownNamesArr)}");
-    if (!string.IsNullOrEmpty(ensembleModel))
-        Console.WriteLine($"Ensemble: {ensembleModel} (blank-fill pass)");
 }
 else
 {
@@ -144,10 +121,6 @@ foreach (var imagePath in imageFiles)
     {
         byte[] rawBytes = await File.ReadAllBytesAsync(imagePath);
 
-        // Optional: resize before any preprocessing so the model sees a predictable resolution.
-        if (resizeWidth > 0)
-            rawBytes = preprocessorInst.ResizeToWidth(rawBytes, resizeWidth);
-
         byte[] processedBytes = preprocessorInst.PreprocessBytes(rawBytes, preprocessMode);
 
         // Write the preprocessed image for inspection when a non-default mode is active.
@@ -161,40 +134,6 @@ foreach (var imagePath in imageFiles)
         }
 
         string output = await parser.ProcessAsync(new MemoryStream(processedBytes), nameFilter);
-
-        // ── Optional halves pass: re-extract bottom employees from a header + bottom-half
-        // composite image and merge, to give the model more pixel budget on lower-table rows.
-        if (halvesMode)
-        {
-            Console.Write(" [halves...");
-            byte[] bottomBytes     = preprocessorInst.CreateHeaderAndBottomHalf(rawBytes);
-            byte[] processedBottom = preprocessorInst.PreprocessBytes(bottomBytes, preprocessMode);
-
-            // Save debug image of the composite for inspection
-            await File.WriteAllBytesAsync(
-                Path.Combine(debugImgDir, $"{name}_bottom.jpg"), bottomBytes);
-
-            string outputB  = await parser.ProcessAsync(new MemoryStream(processedBottom), nameFilter);
-            string jsonB    = ExtractJson(outputB);
-            output          = MergeCalendarResults(output, jsonB);
-            Console.Write("] ");
-        }
-
-        // ── P8: Ensemble blank-fill pass ──────────────────────────────────────
-        // Run a secondary model and use its values to fill any cells the primary
-        // model left blank (""). Never overwrites a non-blank primary value.
-        if (!string.IsNullOrEmpty(ensembleModel))
-        {
-            Console.Write(" [ensemble...");
-            string[] kn = string.IsNullOrEmpty(knownNamesArg)
-                ? Array.Empty<string>()
-                : knownNamesArg.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            var ensembleSvc = new OllamaCalendarService(model: ensembleModel, knownNames: kn.Length > 0 ? kn : null);
-            string outputE  = await ensembleSvc.ProcessAsync(new MemoryStream(processedBytes), nameFilter);
-            string jsonE    = ExtractJson(outputE);
-            output          = MergeBlankFill(output, jsonE);
-            Console.Write("] ");
-        }
 
         imageTimer.Stop();
 
@@ -235,7 +174,7 @@ foreach (var imagePath in imageFiles)
         }
         catch { /* ignore parse errors in summary */ }
 
-        Console.WriteLine($"OK  ({empCount} employees → {Path.GetFileName(outPath)})  [{imageTimer.Elapsed.TotalSeconds:F1}s]");
+        Console.WriteLine($"OK  ({empCount} employees -> {Path.GetFileName(outPath)})  [{imageTimer.Elapsed.TotalSeconds:F1}s]");
         results.Add((Path.GetFileName(imagePath), true, $"{empCount} employees  {imageTimer.Elapsed.TotalSeconds:F1}s"));
     }
     catch (Exception ex)
@@ -248,11 +187,11 @@ foreach (var imagePath in imageFiles)
 
 // ── Summary ───────────────────────────────────────────────────────────────────
 Console.WriteLine();
-Console.WriteLine("── Summary ─────────────────────────────────────────────────");
+Console.WriteLine("-- Summary -----------------------------------------------------------");
 int passed = results.Count(r => r.ok);
 int failed = results.Count - passed;
 foreach (var (file, ok, detail) in results)
-    Console.WriteLine($"  {(ok ? "✓" : "✗")} {file,-40} {detail}");
+    Console.WriteLine($"  {(ok ? "v" : "x")} {file,-40} {detail}");
 Console.WriteLine();
 Console.WriteLine($"  {passed} succeeded, {failed} failed");
 
@@ -260,7 +199,7 @@ Console.WriteLine($"  {passed} succeeded, {failed} failed");
 if (testMode)
 {
     Console.WriteLine();
-    Console.WriteLine("── Test Results ─────────────────────────────────────────────");
+    Console.WriteLine("-- Test Results ---------------------------------------------------------");
 
     int totalExpected = 0, totalMatched = 0;
     // per-employee stats: imageName → (empName → (matched, expected))
@@ -296,7 +235,7 @@ if (testMode)
         totalMatched  += matched;
 
         bool perfect = diffs.Count == 0;
-        Console.WriteLine($"  {(perfect ? "✓" : "✗")} {name + ".jpg",-40} {matched}/{expected} shifts correct");
+        Console.WriteLine($"  {(perfect ? "v" : "x")} {name + ".jpg",-40} {matched}/{expected} shifts correct");
         foreach (var d in diffs)
             Console.WriteLine($"      {d}");
     }
@@ -309,7 +248,7 @@ if (testMode)
     if (allImageEmpStats.Count > 0)
     {
         Console.WriteLine();
-        Console.WriteLine("── Per-Employee Score ────────────────────────────────────────");
+        Console.WriteLine("-- Per-Employee Score ---------------------------------------------------");
 
         // Build combined stats across all images
         var combined = new Dictionary<string, (int matched, int expected)>(StringComparer.OrdinalIgnoreCase);
@@ -343,7 +282,7 @@ if (testMode)
             var tot = combined[emp];
             double tp = tot.expected > 0 ? 100.0 * tot.matched / tot.expected : 0;
             row += $"  {tot.matched}/{tot.expected} ({tp:F0}%)";
-            if (isFranny) row += "  ◄";
+            if (isFranny) row += "  <";
             Console.WriteLine(row);
         }
     }
@@ -506,137 +445,12 @@ static bool ShiftsMatch(string a, string b)
 static string SanitizeModelName(string model) =>
     model.Replace(':', '-').Replace('.', '-');
 
-/// <summary>
-/// Merges two CalendarData JSON strings. <paramref name="jsonB"/> employees override
-/// <paramref name="jsonA"/> employees by name (exact or Levenshtein ≤2 match).
-/// Used when jsonB is extracted from a bottom-half composite image.
-/// </summary>
-static string MergeCalendarResults(string outputA, string jsonB)
-{
-    string jsonA = ExtractJson(outputA);
-    var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-    CalendarData? dataA = null, dataB = null;
-    try { dataA = JsonSerializer.Deserialize<CalendarData>(jsonA,  opts); } catch { }
-    try { dataB = JsonSerializer.Deserialize<CalendarData>(jsonB,  opts); } catch { }
-
-    if (dataA is null) return outputA;  // A is broken; can't merge
-    if (dataB is null) return outputA;  // B is broken; keep A
-
-    // Build dict by name from A; override with B entries (fuzzy name match)
-    var merged = dataA.Employees.ToDictionary(e => e.Name, e => e, StringComparer.OrdinalIgnoreCase);
-    foreach (var empB in dataB.Employees)
-    {
-        if (string.IsNullOrWhiteSpace(empB.Name)) continue;
-        // Prefer exact match, then fuzzy
-        var matchKey = merged.Keys.FirstOrDefault(k =>
-            string.Equals(k, empB.Name, StringComparison.OrdinalIgnoreCase) ||
-            Levenshtein(k, empB.Name) <= 2);
-        if (matchKey is not null)
-            merged[matchKey] = empB;
-        else
-            merged[empB.Name] = empB;
-    }
-
-    var result = new CalendarData
-    {
-        Month     = dataA.Month,
-        Year      = dataA.Year,
-        Employees = merged.Values.ToList()
-    };
-    // Return in the same "debug header + newline + json" format that ExtractJson expects
-    return "\n" + JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
-}
-
 /// <summary>Zero-pads month and day in ISO date strings so 2025-11-1 == 2025-11-01.</summary>
 static string NormalizeDate(string d)
 {
     var m = System.Text.RegularExpressions.Regex.Match(d, @"^(\d{4})-(\d{1,2})-(\d{1,2})$");
     if (!m.Success) return d;
     return $"{int.Parse(m.Groups[1].Value):D4}-{int.Parse(m.Groups[2].Value):D2}-{int.Parse(m.Groups[3].Value):D2}";
-}
-
-/// <summary>
-/// P8: Ensemble blank-fill merge.
-/// Copies shift values from <paramref name="fillOutput"/> into <paramref name="primaryOutput"/>
-/// ONLY for cells where the primary model returned an empty string "".
-/// Non-blank primary values are never overwritten.
-/// </summary>
-static string MergeBlankFill(string primaryOutput, string fillOutput)
-{
-    string primaryJson = ExtractJson(primaryOutput);
-    string fillJson    = ExtractJson(fillOutput);
-
-    JsonElement pRoot, fRoot;
-    try { using var d = JsonDocument.Parse(primaryJson); pRoot = d.RootElement.Clone(); }
-    catch { return primaryOutput; }
-    try { using var d = JsonDocument.Parse(fillJson);    fRoot = d.RootElement.Clone(); }
-    catch { return primaryOutput; }
-
-    // Build filler lookup: (name_lower, normalised_date) → shift
-    var fillMap = new Dictionary<(string, string), string>();
-    if (fRoot.TryGetProperty("Employees", out var fEmpsEl))
-    {
-        foreach (var fe in fEmpsEl.EnumerateArray())
-        {
-            string fn = fe.TryGetProperty("Name", out var fnEl) ? fnEl.GetString() ?? "" : "";
-            if (!fe.TryGetProperty("Shifts", out var fShifts)) continue;
-            foreach (var fs in fShifts.EnumerateArray())
-            {
-                string date  = NormalizeDate(fs.TryGetProperty("Date",  out var fdEl)  ? fdEl.GetString()  ?? "" : "");
-                string shift = fs.TryGetProperty("Shift", out var fshEl) ? fshEl.GetString() ?? "" : "";
-                if (!string.IsNullOrEmpty(fn) && !string.IsNullOrEmpty(date))
-                    fillMap[(fn.ToLowerInvariant(), date)] = shift;
-            }
-        }
-    }
-
-    // Rebuild primary employees, filling blanks from secondary
-    var employees = new List<object>();
-    if (pRoot.TryGetProperty("Employees", out var pEmpsEl))
-    {
-        // Cache filler employee names for fuzzy matching
-        var fillerNames = fRoot.TryGetProperty("Employees", out var fEmps2)
-            ? fEmps2.EnumerateArray().Select(fe => fe.TryGetProperty("Name", out var n) ? n.GetString() ?? "" : "").ToList()
-            : new List<string>();
-
-        foreach (var pe in pEmpsEl.EnumerateArray())
-        {
-            string pn = pe.TryGetProperty("Name", out var pnEl) ? pnEl.GetString() ?? "" : "";
-
-            // Find best fuzzy filler name match
-            string? bestFiller = fillerNames.Count > 0
-                ? fillerNames.OrderBy(fn => Levenshtein(pn, fn)).First()
-                : null;
-            string? bestFillerKey = bestFiller?.ToLowerInvariant();
-
-            var shifts = new List<object>();
-            if (pe.TryGetProperty("Shifts", out var pShifts))
-            {
-                foreach (var ps in pShifts.EnumerateArray())
-                {
-                    string date  = ps.TryGetProperty("Date",  out var pdEl)  ? pdEl.GetString()  ?? "" : "";
-                    string shift = ps.TryGetProperty("Shift", out var pshEl) ? pshEl.GetString() ?? "" : "";
-                    string nd    = NormalizeDate(date);
-
-                    // Only fill if primary is blank and filler has a non-blank value
-                    if (string.IsNullOrEmpty(shift) && bestFillerKey is not null)
-                    {
-                        if (fillMap.TryGetValue((bestFillerKey, nd), out var fill) && !string.IsNullOrEmpty(fill))
-                            shift = fill;
-                    }
-
-                    shifts.Add(new { Date = date, Shift = shift });
-                }
-            }
-            employees.Add(new { Name = pn, Shifts = shifts });
-        }
-    }
-
-    string month = pRoot.TryGetProperty("Month", out var mEl) ? mEl.GetString() ?? "Unknown" : "Unknown";
-    int    year  = pRoot.TryGetProperty("Year",  out var yEl) ? yEl.GetInt32() : 0;
-
-    var result = new { Month = month, Year = year, Employees = employees };
-    return "\n" + JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
 }
 
 /// <summary>
@@ -674,7 +488,7 @@ static void PrintUsage()
     Console.WriteLine("  CalendarParse.Cli <image-folder> [options]");
     Console.WriteLine();
     Console.WriteLine("Modes (default: hybrid):");
-    Console.WriteLine("  (no flag)             HYBRID: WinRT OCR column detection + per-day LLM crop (89.9% accuracy)");
+    Console.WriteLine("  (no flag)             HYBRID: WinRT OCR column detection + per-day LLM crop (90.8% accuracy)");
     Console.WriteLine("  -V, --vision          VISION: pure Ollama vision model, 5-pass multi-step (78.0% accuracy)");
     Console.WriteLine();
     Console.WriteLine("Options:");
@@ -688,14 +502,8 @@ static void PrintUsage()
     Console.WriteLine("                          llm      Colour unsharp-mask sharpen (preserves RGB signal)");
     Console.WriteLine("                          denoise  Grayscale→fast-denoise→EqualizeHist (for noisy scans)");
     Console.WriteLine("                        Preprocessed image written to preprocess-debug/ when mode != none.");
-    Console.WriteLine("  --resize <width>      Resize image to this width (px) before sending to model. 0 = no resize.");
-    Console.WriteLine("                        qwen2.5vl:7b optimal input width is ~1120px.");
-    Console.WriteLine("  --halves              (--vision only) Also run on a header+bottom-half composite and merge.");
-    Console.WriteLine("                        Targets WRONG-COL errors in lower-table employees.");
     Console.WriteLine("  --known-names <csv>   Comma-separated list of expected employee names.");
     Console.WriteLine("                        Normalises OCR phantoms and improves name-extraction accuracy.");
-    Console.WriteLine("  --ensemble <model>    (--vision only) Run a secondary model to fill blank cells.");
-    Console.WriteLine("                        Never overwrites non-blank primary values.");
     Console.WriteLine();
     Console.WriteLine("Output:");
     Console.WriteLine("  For each image.jpg, writes image.output.json and image.debug.txt in the same folder.");

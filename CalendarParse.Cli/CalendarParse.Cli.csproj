@@ -10,6 +10,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="Prompts\prompts.json" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\CalendarParse.Core\CalendarParse.Core.csproj" />
   </ItemGroup>
 

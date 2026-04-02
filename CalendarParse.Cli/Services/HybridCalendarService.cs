@@ -38,7 +38,12 @@ public sealed class HybridCalendarService : ICalendarParseService
     private static readonly Regex TrailingHours = new(
         @"\s+\d+(\.\d+)?$", RegexOptions.Compiled);
 
-
+    // Day-name header contamination: matches bare day names returned by the LLM instead of shift values.
+    // Happens in images where the day-column header (e.g. THURS/FRI/SAT) appears at the same visual
+    // y-level as the first employee row, causing a +1 off-by-one shift in the extracted column.
+    private static readonly Regex DayNamePattern = new(
+        @"^(sun(day)?|mon(day)?|tue(s(day)?)?|wed(nesday)?|thu(r(s(day)?)?)?|fri(day)?|sat(urday)?)$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // Date format found in calendar header rows: M/D (e.g. "9/21") or M/D/YY (e.g. "9/21/25").
     private static readonly Regex OcrDatePattern =
@@ -163,7 +168,7 @@ public sealed class HybridCalendarService : ICalendarParseService
                 int effectiveYear = ocrYear > 0 ? ocrYear : year;
                 string ocrMonthName = MonthNames[ocrMonth];
                 Console.Error.WriteLine(
-                    $"    [{T()}] ocr-dates: override LLM ({month} {year}) → OCR ({ocrMonthName} {effectiveYear}), " +
+                    $"    [{T()}] ocr-dates: override LLM ({month} {year}) -> OCR ({ocrMonthName} {effectiveYear}), " +
                     $"{ocrIsoDates.Count(d => !string.IsNullOrEmpty(d))}/7 dates (ocrYear={ocrYear})");
                 month = ocrMonthName;
                 year  = effectiveYear;
@@ -386,7 +391,7 @@ public sealed class HybridCalendarService : ICalendarParseService
             }
 
             Console.Error.WriteLine(
-                $"    [{T()}] name-ocr-y: found {nameToY.Count}/{names.Count} — " +
+                $"    [{T()}] name-ocr-y: found {nameToY.Count}/{names.Count} - " +
                 string.Join(", ", names.Select(n => nameToY.TryGetValue(n, out int y) ? $"{n}={y}" : $"{n}=?")));
 
             // Only reorder if at least 3 Y-anchors found.
@@ -437,6 +442,9 @@ public sealed class HybridCalendarService : ICalendarParseService
         }
 
         // ── Pass 3: column-strip LLM query for each day column ────────────────
+        // Track which day columns were blanked by the holiday detector so the x-marks pass
+        // can skip applying "x" to cells in those columns (they were reset, not day-off marks).
+        var holidayBlankedDayIndices = new HashSet<int>();
         for (int dayIdx = 0; dayIdx < 7; dayIdx++)
         {
             // Check how many employees still need LLM for this column
@@ -455,7 +463,7 @@ public sealed class HybridCalendarService : ICalendarParseService
             if (needsLlm.Count == 0)
             {
                 Console.Error.WriteLine(
-                    $"    [{T()}] pass 3/4: day {dayIdx} ({dayNamesArr[dayIdx]}) — all filled by OCR");
+                    $"    [{T()}] pass 3/4: day {dayIdx} ({dayNamesArr[dayIdx]}): all filled by OCR");
                 continue;
             }
 
@@ -480,6 +488,18 @@ public sealed class HybridCalendarService : ICalendarParseService
             string isoDate  = dayIdx < dates.Count ? dates[dayIdx] : "";
             string colBase64 = Convert.ToBase64String(queryImage);
 
+            // Pre-compute a 60%-width narrow strip.  Used in two recovery paths inside
+            // ExtractColumnFromImageAsync: (1) hours-sub-column contamination (all-numeric),
+            // (2) uniform-RTO/PTO contamination (reinforced retry with narrower crop).
+            string? narrowBase64 = null;
+            if (usingStrip)
+            {
+                var (dayXStart2, dayXEnd2) = dayColBounds[dayIdx];
+                int narrowW = (dayXEnd2 - dayXStart2) * 3 / 5;  // 60%
+                narrowBase64 = Convert.ToBase64String(
+                    CropAndStitch(rawBytes, 0, nameXEnd, dayXStart2, narrowW, imageHeight));
+            }
+
             // We always query for ALL employees in this column (not just needsLlm),
             // then merge only the blank slots.  This keeps the array size stable.
             List<string> colResults = await ExtractColumnFromImageAsync(
@@ -488,11 +508,13 @@ public sealed class HybridCalendarService : ICalendarParseService
                 isoDate,
                 names,
                 usingStrip,
-                ct);
+                ct,
+                narrowBase64);
 
             // Column-wide holiday/closure detection: if ≥ 80% of employees share the same
             // RTO/PTO value (all non-blank entries identical), it's a column annotation like
             // "Thanksgiving: RTO" — the answer records these as "" (closed). Blank them all.
+            bool holidayBlanked = false;
             {
                 var nonBlank = colResults.Where(v => !string.IsNullOrEmpty(v)).ToList();
                 if (nonBlank.Count >= (int)Math.Ceiling(names.Count * 0.8) && nonBlank.Count > 0)
@@ -504,7 +526,55 @@ public sealed class HybridCalendarService : ICalendarParseService
                                  || modeVal.Equals("PTO", StringComparison.OrdinalIgnoreCase)))
                     {
                         for (int i = 0; i < colResults.Count; i++) colResults[i] = "";
+                        holidayBlanked = true;
+                        holidayBlankedDayIndices.Add(dayIdx);
                     }
+                }
+            }
+
+            // OCR salvage for holiday-blanked columns:
+            // When the holiday detector fires (uniform RTO/PTO) and blanks the entire column,
+            // some employees may genuinely have RTO/PTO (e.g. employees on planned leave).
+            // Use the pre-existing full-image OCR results filtered to this column's X range —
+            // this avoids re-running OCR and uses the original image where tokens are not clipped.
+            if (usingStrip && holidayBlanked)
+            {
+                int colXStart = dayColBounds[dayIdx].XStart;
+                int colXEnd   = dayColBounds[dayIdx].XEnd;
+                var colOcrEls = ocrElements
+                    .Where(e => e.Bounds.CenterX >= colXStart && e.Bounds.CenterX <= colXEnd)
+                    .ToList();
+                var ocrFallback = new string?[names.Count];
+                foreach (var ocrEl in colOcrEls)
+                {
+                    string ocrText = NormalizeShift(ocrEl.Text);
+                    bool isTime    = TimeRangeRegex.IsMatch(ocrText);
+                    bool isRtoLike = ocrText.Equals("RTO", StringComparison.OrdinalIgnoreCase)
+                                  || ocrText.Equals("PTO", StringComparison.OrdinalIgnoreCase)
+                                  || ocrText.Equals("x", StringComparison.OrdinalIgnoreCase);
+                    if (!isTime && !isRtoLike) continue;
+                    int bestEmpIdx2 = -1;
+                    int bestDist2   = 22;
+                    for (int empIdx2 = 0; empIdx2 < names.Count; empIdx2++)
+                    {
+                        if (!nameToYEarly.TryGetValue(names[empIdx2], out int empY2)) continue;
+                        // nameToYEarly stores the top of the employee's name token; the actual
+                        // shift cell center is roughly half a row-height (~9px) below that.
+                        int cellCenter = empY2 + 9;
+                        int dist2 = Math.Abs(ocrEl.Bounds.CenterY - cellCenter);
+                        if (dist2 < bestDist2) { bestDist2 = dist2; bestEmpIdx2 = empIdx2; }
+                    }
+                    if (bestEmpIdx2 >= 0 && ocrFallback[bestEmpIdx2] == null)
+                        ocrFallback[bestEmpIdx2] = ocrText;
+                }
+                int ocrHits = ocrFallback.Count(v => v != null);
+                if (ocrHits > 0)
+                {
+                    string recovered = string.Join(", ", names.Select((n, i) => ocrFallback[i] != null ? $"{n}={ocrFallback[i]}" : null).Where(s => s != null));
+                    Console.Error.WriteLine(
+                        $"    OCR salvage after holiday-blank: {ocrHits}/{names.Count} cells recovered: {recovered}");
+                    for (int i = 0; i < names.Count && i < colResults.Count; i++)
+                        if (ocrFallback[i] != null) colResults[i] = ocrFallback[i]!;
                 }
             }
 
@@ -525,7 +595,7 @@ public sealed class HybridCalendarService : ICalendarParseService
 
             Console.Error.WriteLine(
                 $"    [{T()}] pass 3/4: day {dayIdx} ({dayNamesArr[dayIdx]}) " +
-                $"— {(usingStrip ? "strip" : "full-img")} LLM");
+                $"- {(usingStrip ? "strip" : "full-img")} LLM");
         }
 
         // ── OCR garbage sanitization ──────────────────────────────────────────
@@ -560,7 +630,10 @@ public sealed class HybridCalendarService : ICalendarParseService
                 dynamic cell  = shifts[i];
                 string  shift = cell.Shift ?? "";
                 string  date  = cell.Date  ?? "";
-                if (string.IsNullOrEmpty(shift) && i < 7 && xDays.Contains(dayNamesArr[i]))
+                // Skip holiday-blanked columns — we reset those because the model hallucinated
+                // a uniform RTO/PTO; a blank there means "unknown" not "day off".
+                if (string.IsNullOrEmpty(shift) && i < 7 && xDays.Contains(dayNamesArr[i])
+                    && !holidayBlankedDayIndices.Contains(i))
                     shift = "x";
                 shifts[i] = new { Date = date, Shift = shift };
             }
@@ -803,7 +876,8 @@ public sealed class HybridCalendarService : ICalendarParseService
         string isoDate,
         List<string> names,
         bool   stripMode,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? narrowBase64 = null)
     {
         string nd = OllamaCalendarService.NormalizeIsoDate(isoDate);
         string dateLabel = nd.Length >= 8
@@ -814,67 +888,201 @@ public sealed class HybridCalendarService : ICalendarParseService
         string lastEmployee  = names.Count > 0 ? names[^1] : "the last employee";
         int    predictBudget = names.Count * 25 + 200;
 
+        bool isWeekendCol = dayName.Equals("Sat", StringComparison.OrdinalIgnoreCase) ||
+                            dayName.Equals("Sun", StringComparison.OrdinalIgnoreCase);
+        // v3 retail hint: injected at the START of weekend-column prompts to counteract the
+        // model's strong Saturday/Sunday = day-off prior.  Placed before context to maximise
+        // salience.  Only fires for Sat/Sun — weekday and holiday columns are unaffected.
+        string retailHint = isWeekendCol
+            ? PromptService.Get("weekend_hint") + "\n"
+            : "";
+
         string prompt;
         if (stripMode)
         {
-            prompt =
-                "You are looking at a narrow two-column strip from a weekly work schedule image.\n" +
-                "Note: this is a photograph of a printed grid — lines may not be perfectly straight\n" +
-                "or orthogonal due to camera angle. Read each cell by visual context, not by pixel\n" +
-                "alignment alone.\n" +
-                "The LEFT column shows employee names. The RIGHT column shows their shifts " +
-                $"for {dateLabel}.\n" +
-                "The top row of the RIGHT column is a HEADER showing the day name and date — SKIP IT.\n" +
-                "Do NOT output any date (like '2025-10-30' or '11/27') as a shift value — dates are NEVER shifts.\n" +
-                $"Below the header there are exactly {names.Count} employee rows in this order: {nameList}.\n" +
-                $"The table ends AFTER the row labeled \"{lastEmployee}\" — that final row IS included in your output.\n" +
-                "Read ONLY the employee rows (not the header) in the RIGHT column from top to bottom.\n" +
-                "Each cell contains: a time range (e.g. 9:00-5:30), RTO, PTO, x (day off), or is blank.\n" +
-                "X marks may be in RED ink or any color — treat ANY X or checkmark as \"x\".\n" +
-                "Ignore any hours number shown in a cell — only report the shift label.\n" +
-                $"Reply with ONLY a JSON array of exactly {names.Count} strings, top to bottom:\n" +
-                "[\"value1\", \"value2\", ...]\n" +
-                "Use \"\" for blank cells. No explanation, no markdown.";
+            prompt = retailHint + PromptService.Get("strip_column", new Dictionary<string, string>
+            {
+                ["dateLabel"]  = dateLabel,
+                ["namesCount"] = names.Count.ToString(),
+                ["nameList"]   = nameList,
+                ["lastEmployee"] = lastEmployee
+            });
         }
         else
         {
             // Full-image fallback: same as OllamaCalendarService.ExtractColumnAsync
-            prompt =
-                $"Look at this work schedule image. Focus ONLY on the {dateLabel} column.\n" +
-                "Note: this is a photograph of a printed grid — lines may not be perfectly straight\n" +
-                "or orthogonal due to camera angle. Read each cell by visual context.\n" +
-                $"There are exactly {names.Count} employee rows in this order: {nameList}.\n" +
-                $"The table ends at the row labeled \"{lastEmployee}\".\n" +
-                "Read each cell in that column from top to bottom, one value per employee row.\n" +
-                "Each cell contains: a time range (e.g. 9:00-5:30), RTO, PTO, x (day off), or is blank.\n" +
-                "X marks may be printed in RED ink or any other color — treat ANY X or checkmark as \"x\".\n" +
-                "Ignore any hours number shown in a cell — only report the shift label.\n" +
-                $"Reply with ONLY a JSON array of exactly {names.Count} strings, top to bottom:\n" +
-                "[\"value1\", \"value2\", ...]\n" +
-                "Use \"\" for blank cells. No explanation, no markdown.";
+            prompt = retailHint + PromptService.Get("full_image_column", new Dictionary<string, string>
+            {
+                ["dateLabel"]  = dateLabel,
+                ["namesCount"] = names.Count.ToString(),
+                ["nameList"]   = nameList,
+                ["lastEmployee"] = lastEmployee
+            });
         }
 
         string raw = await _ollama.CallOllamaAsync(base64Image, prompt, ct, numPredict: predictBudget);
 
         var result = new List<string>();
+        int rawNumericCount = 0;
         try
         {
             using var doc = JsonDocument.Parse(raw);
             foreach (var el in doc.RootElement.EnumerateArray())
             {
-                string v = el.GetString() ?? "";
-                v = v.Trim();
-                v = TrailingHours.Replace(v, "").Trim();
-                if (Regex.IsMatch(v, @"^\d+\.?\d*$")) v = "";
+                string v;
+                if (el.ValueKind == JsonValueKind.Number)
+                {
+                    // Model returned a bare JSON number (e.g. 8 or 5.5) for an hours count.
+                    // Count it as numeric contamination and keep it as empty.
+                    rawNumericCount++;
+                    v = "";
+                }
+                else
+                {
+                    v = el.GetString() ?? "";
+                    v = v.Trim();
+                    v = TrailingHours.Replace(v, "").Trim();
+                    if (Regex.IsMatch(v, @"^\d+\.?\d*$")) { rawNumericCount++; v = ""; }
+                }
                 result.Add(v);
             }
         }
         catch { /* return partial or empty — merge will skip blanks */ }
 
-        // If the LLM included the column header date as the first array element (e.g. "2025-10-30"),
-        // remove it to realign employee rows — the padding below will fill the last slot with "".
+        // Hours-sub-column contamination: if ≥ 50% of raw values were pure numbers (hours
+        // counts like "8", "5.5"), the model read the right-hand hours sub-cell instead of
+        // the left-hand shift sub-cell.  Re-query with a pre-computed narrow strip image
+        // (60% column width) that excludes the hours area.
+        // NOTE: Do NOT return early — fall through so the uniform-RTO check below can also
+        // fire on the narrow-strip result (the Sat column can return all-numeric then all-RTO).
+        if (narrowBase64 != null && result.Count > 0 && rawNumericCount > result.Count / 2)
+        {
+            Console.Error.WriteLine(
+                $"    hours-contamination detected ({rawNumericCount}/{result.Count} numeric) — re-query narrow strip");
+            result = await ExtractColumnFromImageAsync(
+                narrowBase64, dayName, isoDate, names, stripMode, ct, narrowBase64: null);
+        }
+
+        // Strip leading header element BEFORE uniform-RTO check so the check sees the true data.
+        // The LLM sometimes includes the ISO date (e.g. "2025-10-30") or day name (e.g. "SAT")
+        // as the first element.  If that header element is still present, the uniform-RTO check
+        // would see a mixed array (SAT + RTO × 12) and incorrectly skip the retry.
         if (result.Count > 0 && Regex.IsMatch(result[0], @"^\d{4}-\d{2}-\d{2}$"))
             result.RemoveAt(0);
+        if (result.Count > 0 && DayNamePattern.IsMatch(result[0]))
+            result.RemoveAt(0);
+
+        // Eight-o-clock start-time contamination: if ≥ 2 time-range values begin with "8:"
+        // the model is likely mis-reading a digit from a nearby hours sub-column (printed "8"
+        // hours-count) as the start-time.  Re-query with the narrow strip to exclude that area.
+        if (narrowBase64 != null)
+        {
+            int eightCount = result.Count(v => TimeRangeRegex.IsMatch(v) && v.StartsWith("8:", StringComparison.OrdinalIgnoreCase));
+            if (eightCount >= 2)
+            {
+                Console.Error.WriteLine($"    8:xx start-time contamination ({eightCount}/{result.Count}) — re-query narrow strip");
+                result = await ExtractColumnFromImageAsync(
+                    narrowBase64, dayName, isoDate, names, stripMode, ct, narrowBase64: null);
+                // Strip leading header from the narrow result as well.
+                if (result.Count > 0 && Regex.IsMatch(result[0], @"^\d{4}-\d{2}-\d{2}$"))
+                    result.RemoveAt(0);
+                if (result.Count > 0 && DayNamePattern.IsMatch(result[0]))
+                    result.RemoveAt(0);
+            }
+        }
+
+        // Uniform-RTO/PTO contamination: when the model returns the same RTO/PTO for
+        // ≥ 80% of employees, it may have pattern-completed from one prominent all-RTO row
+        // (e.g. an employee on leave all week).  Re-query using the narrow strip and a
+        // reinforced per-cell reminder so the model reads each row individually.
+        // If the narrow result also comes back all-uniform, the holiday detector downstream
+        // will blank it correctly.
+        if (narrowBase64 != null && result.Count > 0)
+        {
+            var nonBlankRto = result.Where(v => !string.IsNullOrEmpty(v)).ToList();
+            if (nonBlankRto.Count >= (int)Math.Ceiling(result.Count * 0.8) && nonBlankRto.Count > 0)
+            {
+                string modeRto = nonBlankRto[0];
+                bool allSameRto = nonBlankRto.All(v =>
+                    v.Equals(modeRto, StringComparison.OrdinalIgnoreCase));
+                if (allSameRto && (modeRto.Equals("RTO", StringComparison.OrdinalIgnoreCase)
+                                || modeRto.Equals("PTO", StringComparison.OrdinalIgnoreCase)))
+                {
+                    Console.Error.WriteLine(
+                        $"    uniform-{modeRto} contamination ({nonBlankRto.Count}/{result.Count}) — re-query narrow strip with reinforced prompt");
+                    // Build a reinforced prompt that explicitly warns against pattern-completion
+                    string nameListR = string.Join(", ", names.Select(n => $"\"{n}\""));
+                    string lastEmpR  = names.Count > 0 ? names[^1] : "the last employee";
+                    string reinforcedRetailHint = isWeekendCol
+                        ? PromptService.Get("reinforced_weekend_hint") + "\n"
+                        : "";
+                    string reinforcedPrompt = reinforcedRetailHint + PromptService.Get("reinforced_column", new Dictionary<string, string>
+                    {
+                        ["dateLabel"]    = dateLabel,
+                        ["namesCount"]   = names.Count.ToString(),
+                        ["nameList"]     = nameListR,
+                        ["lastEmployee"] = lastEmpR
+                    });
+                    string retryRaw2 = await _ollama.CallOllamaAsync(narrowBase64, reinforcedPrompt, ct, numPredict: predictBudget);
+                    var retryResult = new List<string>();
+                    try
+                    {
+                        using var doc2 = JsonDocument.Parse(retryRaw2);
+                        foreach (var el in doc2.RootElement.EnumerateArray())
+                        {
+                            string v2;
+                            if (el.ValueKind == JsonValueKind.Number) { v2 = ""; }
+                            else
+                            {
+                                v2 = el.GetString() ?? "";
+                                v2 = v2.Trim();
+                                v2 = TrailingHours.Replace(v2, "").Trim();
+                                if (Regex.IsMatch(v2, @"^\d+\.?\d*$")) v2 = "";
+                            }
+                            retryResult.Add(v2);
+                        }
+                    }
+                    catch { /* keep original result if parse fails */ }
+
+                    // Only use the retry result if it is varied AND contains at least one
+                    // time-range.  If the retry also returns only RTO/PTO/x/blank (no time-ranges),
+                    // the model still can't read this column — keep the original all-uniform result
+                    // so the holiday detector downstream can blank it cleanly, and the OCR salvage
+                    // pass can then recover any cells that OCR CAN read.
+                    if (retryResult.Count > 0)
+                    {
+                        var nonBlankRetry = retryResult.Where(v => !string.IsNullOrEmpty(v)).ToList();
+                        bool retryAllSame = nonBlankRetry.Count > 0 &&
+                            nonBlankRetry.All(v => v.Equals(nonBlankRetry[0], StringComparison.OrdinalIgnoreCase));
+                        bool retryHasTimeRange = retryResult.Any(v => TimeRangeRegex.IsMatch(v));
+                        if (retryHasTimeRange)
+                        {
+                            Console.Error.WriteLine($"    narrow-reinforced retry has time-ranges — using it");
+                            result = retryResult;
+                            // Strip leading header from retry result (day-name or ISO date) so
+                            // subsequent Take(names.Count) aligns correctly with employee rows.
+                            if (result.Count > 0 && Regex.IsMatch(result[0], @"^\d{4}-\d{2}-\d{2}$"))
+                                result.RemoveAt(0);
+                            if (result.Count > 0 && DayNamePattern.IsMatch(result[0]))
+                                result.RemoveAt(0);
+                        }
+                        else if (!retryAllSame || nonBlankRetry.Count < result.Count * 0.8)
+                        {
+                            // Varied but no time-ranges: still can't read actual shifts.
+                            // Keep original uniform result so holiday detector handles it.
+                            Console.Error.WriteLine($"    narrow-reinforced retry varied but no time-ranges — keeping original for holiday detector");
+                        }
+                        else
+                        {
+                            Console.Error.WriteLine($"    narrow-reinforced retry also uniform — keeping original for holiday detector");
+                        }
+                    }
+                }
+            }
+        }
+
+        // If the LLM included the column header date as the first array element (e.g. "2025-10-30"),
+        // (Header stripping is done earlier, before the uniform-RTO check.)
 
         // Targeted re-query for last employee:
         // Case 1 — truncated array (n-1 values): LLM stopped before the last row.
@@ -888,12 +1096,11 @@ public sealed class HybridCalendarService : ICalendarParseService
         if (needsLastRequery)
         {
             string missingEmployee = names[^1];
-            string retryPrompt =
-                $"Look at this work schedule strip image.\n" +
-                $"\"{missingEmployee}\" is in the LAST employee row at the bottom of the image.\n" +
-                $"What shift does \"{missingEmployee}\" have on {dateLabel}?\n" +
-                "Reply with ONLY the shift value: a time range (e.g. 9:00-5:30), RTO, PTO, x, or \"\" for blank.\n" +
-                "No explanation, no markdown, just the value.";
+            string retryPrompt = PromptService.Get("last_employee_requery", new Dictionary<string, string>
+            {
+                ["employeeName"] = missingEmployee,
+                ["dateLabel"]    = dateLabel
+            });
             string retryRaw = await _ollama.CallOllamaAsync(base64Image, retryPrompt, ct, numPredict: 60);
             string retryVal = retryRaw.Trim().Trim('"').Trim();
             retryVal = TrailingHours.Replace(retryVal, "").Trim();
@@ -913,12 +1120,12 @@ public sealed class HybridCalendarService : ICalendarParseService
                 && result[names.Count - 2] == retryVal)
             {
                 string penultEmployee = names[^2];
-                string penultPrompt =
-                    $"Look at this work schedule strip image.\n" +
-                    $"\"{penultEmployee}\" is the second-to-last employee row, just ABOVE \"{missingEmployee}\".\n" +
-                    $"What shift does \"{penultEmployee}\" have on {dateLabel}?\n" +
-                    "Reply with ONLY the shift value: a time range (e.g. 9:00-5:30), RTO, PTO, x, or \"\" for blank.\n" +
-                    "No explanation, no markdown, just the value.";
+                string penultPrompt = PromptService.Get("penultimate_employee_requery", new Dictionary<string, string>
+                {
+                    ["penultEmployee"] = penultEmployee,
+                    ["lastEmployee"]   = missingEmployee,
+                    ["dateLabel"]      = dateLabel
+                });
                 string penultRaw = await _ollama.CallOllamaAsync(base64Image, penultPrompt, ct, numPredict: 60);
                 string penultVal = penultRaw.Trim().Trim('"').Trim();
                 penultVal = TrailingHours.Replace(penultVal, "").Trim();

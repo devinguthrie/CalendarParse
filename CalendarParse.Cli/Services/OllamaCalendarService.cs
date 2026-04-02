@@ -320,15 +320,7 @@ public class OllamaCalendarService : ICalendarParseService
     internal async Task<(string month, int year, List<string> isoDates)> ExtractHeaderAsync(
         string base64Image, CancellationToken ct)
     {
-        const string prompt =
-            "Look at this work schedule image.\n" +
-            "Find the header row that contains the 7 dates of the week.\n" +
-            "The week runs Sunday through Saturday (7 days).\n" +
-            "Reply with ONLY a JSON object — no markdown, no extra text:\n" +
-            "{\"Month\":\"<full month name of Sunday>\",\"Year\":<4-digit year>," +
-            "\"Dates\":[\"YYYY-MM-DD\",\"YYYY-MM-DD\",\"YYYY-MM-DD\",\"YYYY-MM-DD\"," +
-            "\"YYYY-MM-DD\",\"YYYY-MM-DD\",\"YYYY-MM-DD\"]}\n" +
-            "Exactly 7 dates Sun→Sat. Convert M/D/YY to YYYY-MM-DD. Do NOT use today's date.";
+        string prompt = PromptService.Get("extract_header");
 
         string raw = await CallOllamaAsync(base64Image, prompt, ct, numPredict: 300);
         try
@@ -354,30 +346,20 @@ public class OllamaCalendarService : ICalendarParseService
         IReadOnlyList<string>? additionalHints = null,
         IReadOnlyList<string>? ocrNameFragments = null)
     {
-        string prompt =
-            "Look at this work schedule image.\n" +
-            "Note: this is a photograph of a printed grid — the grid lines may not be perfectly\n" +
-            "straight or orthogonal due to camera angle and perspective distortion. Read each row\n" +
-            "by visual context, not pixel-perfect alignment.\n" +
-            "Find the MAIN employee scheduling table (the large table at the top).\n" +
-            "List every employee name from the leftmost column of that table, one name per line.\n" +
-            "Go top to bottom. Stop before any secondary or totals table.\n" +
-            "Spell each name EXACTLY character by character as it appears in the image.\n" +
-            "Output ONLY the names — no numbers, no extra text, no punctuation.";
+        string prompt = PromptService.Get("extract_names");
         if (_knownNames.Count > 0)
-            prompt += $"\nKnown employee names for this schedule (if you see one of these, use this exact spelling): {string.Join(", ", _knownNames)}. Do not invent names not on this list unless they are clearly visible.";
+            prompt += "\n" + PromptService.Get("extract_names_known_names_suffix", new Dictionary<string, string>
+                { ["knownNames"] = string.Join(", ", _knownNames) });
         if ((additionalHints?.Count ?? 0) > 0)
             // Session hints from prior images help with spelling but are not exhaustive — the
             // schedule may have employees not in this list, so still report everyone visible.
-            prompt += $"\nSpelling reference from related schedules (use these exact spellings if you see them, but also list ANY other names clearly visible): {string.Join(", ", additionalHints!)}.";
+            prompt += "\n" + PromptService.Get("extract_names_additional_hints_suffix", new Dictionary<string, string>
+                { ["additionalHints"] = string.Join(", ", additionalHints!) });
         if ((ocrNameFragments?.Count ?? 0) > 0)
             // OCR partial reads from the name column of THIS image anchor the LLM to what
             // is actually present, including rows with unusual styling OCR couldn't fully decode.
-            prompt += $"\nOCR detected these partial text fragments from the name column of this image " +
-                      $"(they may be truncated or split): {string.Join(", ", ocrNameFragments!)}. " +
-                      "Use these as anchors — every fragment likely corresponds to an employee row. " +
-                      "Identify the full name for each fragment, and include ANY additional names " +
-                      "visually present that OCR may have missed entirely.";
+            prompt += "\n" + PromptService.Get("extract_names_ocr_fragments_suffix", new Dictionary<string, string>
+                { ["ocrFragments"] = string.Join(", ", ocrNameFragments!) });
 
         string raw = await CallOllamaAsync(base64Image, prompt, ct, isJson: false, numPredict: 200);
 
@@ -387,6 +369,9 @@ public class OllamaCalendarService : ICalendarParseService
         {
             string n = line.Trim(' ', '\r', '-', '*', '\u2022');
             n = Regex.Replace(n, @"^\d+[.)\s]+", "").Trim(); // remove leading "1. "
+            // Strip trailing parenthetical designations (e.g. "(train)", "(T)", "(mgr)", "(SM)")
+            // that some schedules append to employee names — they are not part of the name itself.
+            n = Regex.Replace(n, @"\s*\([^)]{1,20}\)\s*$", "").Trim();
             if (n.Length >= 2 && n.Length <= 40 && seen.Add(n))
                 names.Add(n);
         }
@@ -399,21 +384,8 @@ public class OllamaCalendarService : ICalendarParseService
         string base64Image, List<string> names, CancellationToken ct)
     {
         string nameList = string.Join(", ", names.Select(n => $"\"{n}\""));
-        string prompt =
-            "Look at this work schedule image.\n" +
-            "Note: this is a photograph of a printed grid — lines may not be perfectly straight\n" +
-            "or orthogonal due to camera angle. Read each cell by visual context.\n" +
-            "For each employee listed below, identify ONLY the day columns that contain an X mark\n" +
-            "or checkmark symbol — these indicate a day off. X marks may be red, black, or any color.\n" +
-            $"Employees: {nameList}.\n" +
-            "Reply with ONLY this JSON (no markdown, no explanation):\n" +
-            "{\n" +
-            "  \"<EmployeeName>\": [\"<DayName>\", ...],\n" +
-            "  ...\n" +
-            "}\n" +
-            "Day names are: Sun, Mon, Tue, Wed, Thu, Fri, Sat.\n" +
-            "Include ALL employees. Use [] if no days have an X mark.\n" +
-            "Do NOT include days with time ranges, RTO, PTO, or blank cells — ONLY X marks.";
+        string prompt = PromptService.Get("extract_x_marks", new Dictionary<string, string>
+            { ["nameList"] = nameList });
 
         string raw = await CallOllamaAsync(base64Image, prompt, ct, numPredict: 1500);
 
@@ -545,17 +517,13 @@ public class OllamaCalendarService : ICalendarParseService
         string nameList = string.Join(", ", names.Select(n => $"\"  {n}\""));
         string lastEmployee = names.Count > 0 ? names[^1] : "the last employee";
 
-        string prompt =
-            $"Look at this work schedule image. Focus ONLY on the {dateLabel} column.\n" +
-            $"There are exactly {names.Count} employee rows in this order: {nameList}.\n" +
-            $"The table ends at the row labeled \"{lastEmployee}\".\n" +
-            "Read each cell in that column from top to bottom, one value per employee row.\n" +
-            "Each cell contains: a time range (e.g. 9:00-5:30), RTO, PTO, x (day off), or is blank.\n" +
-            "X marks may be printed in RED ink or any other color — treat ANY X or checkmark as \"x\".\n" +
-            "Ignore any hours number shown in a cell — only report the shift label.\n" +
-            $"Reply with ONLY a JSON array of exactly {names.Count} strings, top to bottom:\n" +
-            "[\"value1\", \"value2\", ...]\n" +
-            "Use \"\" for blank cells. No explanation, no markdown.";
+        string prompt = PromptService.Get("extract_column", new Dictionary<string, string>
+        {
+            ["dateLabel"]    = dateLabel,
+            ["namesCount"]   = names.Count.ToString(),
+            ["nameList"]     = nameList,
+            ["lastEmployee"] = lastEmployee
+        });
 
         int predictBudget = names.Count * 25 + 150;
         string raw = await CallOllamaAsync(base64Image, prompt, ct, numPredict: predictBudget);
@@ -589,20 +557,14 @@ public class OllamaCalendarService : ICalendarParseService
         string nameList = string.Join(", ", names.Select(n => $"\"  {n}\""));
         string lastEmployee = names.Count > 0 ? names[^1] : "the last employee";
 
-        string prompt =
-            $"Look at this work schedule image. You must read the {dateLabel} column.\n" +
-            $"IMPORTANT: Find the column whose header shows the date '{md}' printed at the top " +
-            $"of the table. Do NOT guess the column by day-of-week position — locate the printed " +
-            $"label '{md}' in the header row, then read the cells directly below it.\n" +
-            $"There are exactly {names.Count} employee rows in this order: {nameList}.\n" +
-            $"The table ends at the row labeled \"{lastEmployee}\".\n" +
-            "Read each cell in that column from top to bottom, one value per employee row.\n" +
-            "Each cell contains: a time range (e.g. 9:00-5:30), RTO, PTO, x (day off), or is blank.\n" +
-            "X marks may be printed in RED ink or any other color — treat ANY X or checkmark as \"x\".\n" +
-            "Ignore any hours number shown in a cell — only report the shift label.\n" +
-            $"Reply with ONLY a JSON array of exactly {names.Count} strings, top to bottom:\n" +
-            "[\"value1\", \"value2\", ...]\n" +
-            "Use \"\" for blank cells. No explanation, no markdown.";
+        string prompt = PromptService.Get("extract_column_anchored", new Dictionary<string, string>
+        {
+            ["dateLabel"]    = dateLabel,
+            ["md"]           = md,
+            ["namesCount"]   = names.Count.ToString(),
+            ["nameList"]     = nameList,
+            ["lastEmployee"] = lastEmployee
+        });
 
         int predictBudget = names.Count * 25 + 150;
         string raw = await CallOllamaAsync(base64Image, prompt, ct, numPredict: predictBudget);
@@ -646,35 +608,16 @@ public class OllamaCalendarService : ICalendarParseService
         string dayKeyList    = string.Join(", ", dayNames.Select(k => $"\"{k}\""));
         string dayKeyExample = string.Join(",", dayNames.Select(k => $"\"{k}\":\"<value>\""));
 
-        string prompt =
-            "Look at this work schedule image.\n" +
-            $"Extract shift values for these {names.Count} employees: {nameList}.\n" +
-            "For each employee, find their row in the main scheduling table and read each day column carefully.\n" +
-            $"The main table ends at the row labeled \"{lastEmployee}\" — do NOT read the secondary table below it.\n" +
-            $"The 7 day columns are: {dayStr}.\n" +
-            "Each cell shows one of: a time range (e.g. 9:00-5:30), RTO, PTO, x (day off), or is blank.\n" +
-            "Each cell also shows an hours number — IGNORE the number, only report the shift label.\n" +
-            "X marks may be printed in RED ink or any other color — treat ANY X or checkmark (red, black, or any color) as \"x\".\n" +
-            "\"x\" and \"\" (blank) are DIFFERENT: an X mark in a cell = \"x\"; a completely empty cell = \"\".\n" +
-            "Reply with ONLY this JSON (no markdown, no explanation). Use day names as keys:\n" +
-            "{\n" +
-            $"  \"<EmployeeName>\": {{{dayKeyExample}}},\n" +
-            "  ...\n" +
-            "}\n" +
-            "Rules:\n" +
-            "- Use empty string \"\" ONLY when a cell is completely empty/blank.\n" +
-            "- Use \"x\" when a cell contains an X mark or checkmark (day off).\n" +
-            "- Copy time ranges exactly as written (e.g. \"9:00-5:30\", \"10:00-6:30\", \"12:00-4:30\").\n" +
-            "- Use \"RTO\" or \"PTO\" when those labels appear in the cell.\n" +
-            "- Do NOT include hours numbers in values. Do NOT omit any employee or any day.\n" +
-            $"- Include ALL employees. Use exactly these day-name keys: {dayKeyList}.\n" +
-            // P11: warn about blank/holiday columns to prevent WRONG-COL drift
-            "- IMPORTANT: Any date column may be entirely blank for ALL employees (e.g., a public holiday). " +
-            "If every employee in a column has no shift, output \"\" for all of them — do NOT redistribute values from an adjacent column to fill a blank column.\n" +
-            // P20: negative anti-WRONG-COL warning — explicitly forbid the right-shift error pattern
-            "- CRITICAL: Do NOT shift values one column to the right. Each cell value belongs ONLY in the column " +
-            "whose header is directly above that cell. If you read a value from the Mon column, it must be stored " +
-            "under the \"Mon\" key — never under \"Tue\" or any other key. Read each column header and its cells independently.";
+        string dayKeyExampleWithBraces = "{" + dayKeyExample + "}";
+        string prompt = PromptService.Get("extract_all_shifts", new Dictionary<string, string>
+        {
+            ["namesCount"]    = names.Count.ToString(),
+            ["nameList"]      = nameList,
+            ["lastEmployee"]  = lastEmployee,
+            ["dayStr"]        = dayStr,
+            ["dayKeyList"]    = dayKeyList,
+            ["dayKeyExample"] = dayKeyExampleWithBraces
+        });
 
         // num_predict: employees × 7 day-value pairs × ~30 chars avg + JSON overhead
         int predictBudget = Math.Max(3000, names.Count * 7 * 30 + 800);
@@ -720,249 +663,6 @@ public class OllamaCalendarService : ICalendarParseService
         return result;
     }
 
-    // ── CSV-format row extraction (Phase 41 experiment) ──────────────────────
-    // Uses image-visible date headers as CSV column keys instead of abstract day names.
-    // Structural advantage: column count is verifiable; wrong-count rows can be flagged.
-
-    private async Task<Dictionary<string, List<object>>> ExtractAllShiftsCsvAsync(
-        string base64Image, List<string> names, List<string> dates, CancellationToken ct)
-    {
-        string nameList = string.Join(", ", names.Select(n => $"\"{n}\""));
-        string lastEmployee = names.Count > 0 ? names[^1] : "the last employee";
-
-        // Build date label strings to use as CSV column headers (e.g. "10/26", "10/27", ...)
-        // These match what the model can visually read in the image header row.
-        var dateLabels = new List<string>();
-        for (int i = 0; i < 7; i++)
-        {
-            if (i < dates.Count)
-            {
-                string nd = NormalizeIsoDate(dates[i]);
-                dateLabels.Add(nd.Length >= 5 ? nd[5..].Replace("-", "/") : $"Day{i + 1}");
-            }
-            else dateLabels.Add($"Day{i + 1}");
-        }
-        string csvHeader = "Employee," + string.Join(",", dateLabels);
-        string csvExample = "<EmployeeName>," + string.Join(",", Enumerable.Repeat("<value>", 7));
-
-        string prompt =
-            "Look at this work schedule image.\n" +
-            $"Extract shift values for these {names.Count} employees: {nameList}.\n" +
-            "For each employee, find their row in the main scheduling table and read each day column carefully.\n" +
-            $"The main table ends at the row labeled \"{lastEmployee}\" — do NOT read the secondary table below it.\n" +
-            "Each cell shows one of: a time range (e.g. 9:00-5:30), RTO, PTO, x (day off), or is blank.\n" +
-            "Each cell also shows an hours number — IGNORE the number, only report the shift label.\n" +
-            "X marks may be printed in RED ink or any other color — treat ANY X or checkmark as \"x\".\n" +
-            "\"x\" = day off (X mark present). Empty string = completely blank cell (no value, no mark).\n" +
-            "Reply with ONLY a plain CSV table (no markdown, no explanation, no quotes around values).\n" +
-            "First line must be exactly this header:\n" +
-            csvHeader + "\n" +
-            "Then one data row per employee:\n" +
-            csvExample + "\n" +
-            "Rules:\n" +
-            "- CRITICAL: Do NOT shift values one column to the right. Each cell value belongs ONLY in the " +
-            "column whose header date is directly above that cell in the image. Read each column header and " +
-            "its cells independently.\n" +
-            "- Blank cell = leave empty between the commas (two consecutive commas ,, or trailing comma for last column).\n" +
-            "- Copy time ranges exactly as written (e.g. 9:00-5:30, 10:00-6:30, 12:00-4:30).\n" +
-            "- Do NOT include hours numbers in values. Do NOT omit any employee or any day.\n" +
-            $"- Include ALL {names.Count} employees, one row each.\n" +
-            "- IMPORTANT: Any date column may be entirely blank for ALL employees (e.g., a public holiday). " +
-            "Output empty for all of them — do NOT redistribute values from an adjacent column to fill it.";
-
-        int predictBudget = Math.Max(2500, names.Count * 7 * 15 + 500);
-        string raw = await CallOllamaAsync(base64Image, prompt, ct, isJson: false, numPredict: predictBudget);
-
-        var result = new Dictionary<string, List<object>>(StringComparer.OrdinalIgnoreCase);
-        try
-        {
-            var lines = raw.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            foreach (var line in lines)
-            {
-                // Skip header row and any preamble lines (must contain at least one comma)
-                int commaCount = line.Count(c => c == ',');
-                if (commaCount == 0) continue;
-
-                var parts = line.Split(',');
-                string empName = parts[0].Trim().Trim('"').Trim();
-                if (string.IsNullOrEmpty(empName)) continue;
-
-                // Skip if first token looks like the CSV header
-                if (empName.Equals("Employee", StringComparison.OrdinalIgnoreCase)) continue;
-                // Skip if first token looks like a date label (e.g. "10/26")
-                if (Regex.IsMatch(empName, @"^\d+/\d+")) continue;
-
-                var shifts = new List<object>();
-                for (int i = 0; i < 7; i++)
-                {
-                    string date  = i < dates.Count ? NormalizeIsoDate(dates[i]) : "";
-                    string shift = i + 1 < parts.Length ? parts[i + 1].Trim().Trim('"').Trim() : "";
-                    shift = Regex.Replace(shift, @"\s+\d+(\.\d+)?$", "").Trim();
-                    if (Regex.IsMatch(shift, @"^\d+\.?\d*$")) shift = "";
-                    shifts.Add(new { Date = date, Shift = shift });
-                }
-                result[empName] = shifts;
-            }
-        }
-        catch
-        {
-            // Return empty — caller will fall back to per-employee
-        }
-        return result;
-    }
-
-    // ── Dual-view cross-reference extraction (Phase 42) ─────────────────────
-    // Asks for BOTH a per-employee row view AND a per-day column view in ONE call.
-    // Cells where both views agree → high-confidence value.
-    // Cells where both views produce different non-empty values → "" (unresolvable,
-    //   let the other 5 majority-vote runs determine it).
-    // Cells where only one view has a value → use that value.
-    // This result is added as a 6th run (5 existing + 1 dual) to the majority vote.
-
-    private async Task<Dictionary<string, List<object>>> ExtractAllShiftsDualAsync(
-        string base64Image, List<string> names, List<string> dates, CancellationToken ct)
-    {
-        string nameList = string.Join(", ", names.Select(n => $"\"{n}\""));
-        string lastEmployee = names.Count > 0 ? names[^1] : "the last employee";
-
-        var dayNames = new[] { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
-        string dayStr = string.Join(", ", dayNames.Select((d, i) =>
-        {
-            if (i >= dates.Count) return d;
-            string nd = NormalizeIsoDate(dates[i]);
-            return nd.Length >= 5 ? $"{d} ({nd[5..].Replace("-", "/")})" : d;
-        }));
-        string dayKeyList = string.Join(", ", dayNames.Select(k => $"\"{k}\""));
-
-        string prompt =
-            "Look at this work schedule image.\n" +
-            $"Extract shift values for these {names.Count} employees: {nameList}.\n" +
-            $"The main table ends at the row labeled \"{lastEmployee}\" — do NOT read the secondary table below it.\n" +
-            $"The 7 day columns are: {dayStr}.\n" +
-            "Each cell shows one of: a time range (e.g. 9:00-5:30), RTO, PTO, x (day off), or is blank.\n" +
-            "Ignore any hours number shown in a cell — only report the shift label.\n" +
-            "X marks may be printed in RED ink or any color — treat ANY X or checkmark as \"x\".\n" +
-            "\"x\" = day off. \"\" = completely blank cell with no value or mark.\n" +
-            "Reply with ONLY this JSON (no markdown, no explanation):\n" +
-            "{\n" +
-            "  \"by_employee\": {\n" +
-            "    \"<EmployeeName>\": {\"Sun\": \"<value>\", \"Mon\": \"<value>\", \"Tue\": \"<value>\", \"Wed\": \"<value>\", \"Thu\": \"<value>\", \"Fri\": \"<value>\", \"Sat\": \"<value>\"},\n" +
-            "    ...\n" +
-            "  },\n" +
-            "  \"by_day\": {\n" +
-            "    \"Sun\": {\"<EmployeeName>\": \"<value>\", ...},\n" +
-            "    \"Mon\": {\"<EmployeeName>\": \"<value>\", ...},\n" +
-            "    ...\n" +
-            "  }\n" +
-            "}\n" +
-            "For by_employee: read each employee row left-to-right across all 7 day columns.\n" +
-            "For by_day: read each day column top-to-bottom, one value per employee.\n" +
-            "Rules:\n" +
-            "- Use \"\" for completely blank cells. Use \"x\" for X marks or checkmarks.\n" +
-            "- Copy time ranges exactly as written (e.g. \"9:00-5:30\", \"10:00-6:30\").\n" +
-            "- Do NOT include hours numbers in values. Include ALL employees and ALL days.\n" +
-            $"- Use exactly these day-name keys: {dayKeyList}.\n" +
-            "- IMPORTANT: Any date column may be entirely blank for ALL employees (e.g., a public holiday). " +
-            "Output \"\" for all of them — do NOT redistribute values from an adjacent column.\n" +
-            "- CRITICAL: Do NOT shift values one column to the right. Each cell value belongs ONLY in the " +
-            "column whose header is directly above that cell. Read each column header and its cells independently.";
-
-        // Budget: two full grids in one response
-        int predictBudget = Math.Max(6000, names.Count * 7 * 60 + 1500);
-        string raw = await CallOllamaAsync(base64Image, prompt, ct, numPredict: predictBudget);
-
-        // ── Parse both views ──────────────────────────────────────────────────
-        var byEmployee = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
-        var byDay      = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
-
-        try
-        {
-            using var doc = JsonDocument.Parse(raw);
-
-            // Parse by_employee
-            if (doc.RootElement.TryGetProperty("by_employee", out var empElem))
-            {
-                foreach (var emp in empElem.EnumerateObject())
-                {
-                    var days = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                    if (emp.Value.ValueKind == JsonValueKind.Object)
-                        foreach (var day in emp.Value.EnumerateObject())
-                            days[day.Name] = day.Value.GetString() ?? "";
-                    byEmployee[emp.Name] = days;
-                }
-            }
-
-            // Parse by_day
-            if (doc.RootElement.TryGetProperty("by_day", out var dayElem))
-            {
-                foreach (var day in dayElem.EnumerateObject())
-                {
-                    var emps = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                    if (day.Value.ValueKind == JsonValueKind.Object)
-                        foreach (var emp in day.Value.EnumerateObject())
-                            emps[emp.Name] = emp.Value.GetString() ?? "";
-                    byDay[day.Name] = emps;
-                }
-            }
-        }
-        catch { /* return empty on parse failure */ }
-
-        // ── Cross-reference: build result per employee ────────────────────────
-        var result = new Dictionary<string, List<object>>(StringComparer.OrdinalIgnoreCase);
-        foreach (string name in names)
-        {
-            byEmployee.TryGetValue(name, out var empDays);
-            var shifts = new List<object>();
-
-            for (int i = 0; i < 7; i++)
-            {
-                string dayName = dayNames[i];
-                string date    = i < dates.Count ? NormalizeIsoDate(dates[i]) : "";
-
-                // Row view: what by_employee says for this employee/day
-                string rowVal = "";
-                if (empDays != null && empDays.TryGetValue(dayName, out var rv))
-                    rowVal = (rv ?? "").Trim();
-                rowVal = Regex.Replace(rowVal, @"\s+\d+(\.\d+)?$", "").Trim();
-                if (Regex.IsMatch(rowVal, @"^\d+\.?\d*$")) rowVal = "";
-
-                // Column view: what by_day says for this day/employee
-                string colVal = "";
-                if (byDay.TryGetValue(dayName, out var dayEmps) && dayEmps.TryGetValue(name, out var cv))
-                    colVal = (cv ?? "").Trim();
-                colVal = Regex.Replace(colVal, @"\s+\d+(\.\d+)?$", "").Trim();
-                if (Regex.IsMatch(colVal, @"^\d+\.?\d*$")) colVal = "";
-
-                string chosen;
-                if (string.Equals(rowVal, colVal, StringComparison.OrdinalIgnoreCase))
-                {
-                    // Both views agree (including both empty)
-                    chosen = rowVal;
-                }
-                else if (string.IsNullOrEmpty(rowVal))
-                {
-                    // Only column view has a value — use it
-                    chosen = colVal;
-                }
-                else if (string.IsNullOrEmpty(colVal))
-                {
-                    // Only row view has a value — use it
-                    chosen = rowVal;
-                }
-                else
-                {
-                    // Both views have different non-empty values — unresolvable disagreement.
-                    // Return "" so the other 5 majority-vote runs determine this cell.
-                    chosen = "";
-                }
-
-                shifts.Add(new { Date = date, Shift = chosen });
-            }
-            result[name] = shifts;
-        }
-        return result;
-    }
-
     // ── Per-employee row extraction (fallback) ────────────────────────────────
 
     private async Task<List<object>> ExtractRowAsync(
@@ -976,14 +676,11 @@ public class OllamaCalendarService : ICalendarParseService
             return nd.Length >= 5 ? $"{d} ({nd[5..].Replace("-", "/")})" : d;
         }));
 
-        string prompt =
-            $"Look at this work schedule image. Find the row labeled \"{employeeName}\".\n" +
-            $"The 7 day columns are: {dayStr}.\n" +
-            "Each cell shows a shift label or is blank. Ignore the hours number in each cell.\n" +
-            "\"x\" = X mark (day off). \"\" = completely empty cell. RTO/PTO as written.\n" +
-            "Reply with ONLY this JSON (no markdown, no explanation):\n" +
-            "{\"Sun\":\"...\",\"Mon\":\"...\",\"Tue\":\"...\",\"Wed\":\"...\",\"Thu\":\"...\",\"Fri\":\"...\",\"Sat\":\"...\"}\n" +
-            "Copy time ranges exactly (e.g. \"9:00-5:30\", \"10:00-6:30\"). Do not explain.";
+        string prompt = PromptService.Get("extract_row", new Dictionary<string, string>
+        {
+            ["employeeName"] = employeeName,
+            ["dayStr"]       = dayStr
+        });
 
         string raw = await CallOllamaAsync(base64Image, prompt, ct, isJson: true, numPredict: 600);
 

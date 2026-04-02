@@ -1,0 +1,191 @@
+{
+  "weekend_hint": [
+    "CRITICAL: This retail store is open 7 days a week. Saturday and Sunday are NORMAL WORKDAYS \u2014 every employee is scheduled for a regular shift.",
+    "You MUST read the actual value printed in each cell. Most cells will contain a shift time range (e.g. '9:00-5:30', '12:00-8:30').",
+    "ONLY write 'RTO' if you can clearly see the letters R-T-O printed in that individual cell. Never assume 'RTO' because it is a weekend.",
+    "If you find yourself writing 'RTO' for every employee, STOP \u2014 you are misreading shift times. Look at the actual numbers."
+  ],
+
+  "reinforced_weekend_hint": [
+    "STOP. Your previous answer had 'RTO' for every employee. That is WRONG for a weekend column.",
+    "This retail store is open on Saturdays and Sundays \u2014 every employee has a real shift time printed in their cell.",
+    "You MUST read the actual numbers printed in each cell (like '9:00-5:30', '8:00-4:00'). ONLY write 'RTO' if you clearly see the letters R-T-O in that specific cell \u2014 not because it is a weekend."
+  ],
+
+  "strip_column": [
+    "You are looking at a narrow two-column strip from a weekly work schedule image.",
+    "Note: this is a photograph of a printed grid \u2014 lines may not be perfectly straight",
+    "or orthogonal due to camera angle. Read each cell by visual context, not by pixel",
+    "alignment alone.",
+    "The LEFT column shows employee names. The RIGHT column shows their shifts for {dateLabel}.",
+    "The top row of the RIGHT column is a HEADER showing the day name and date \u2014 SKIP IT.",
+    "Do NOT output any date (like '2025-10-30' or '11/27') as a shift value \u2014 dates are NEVER shifts.",
+    "Below the header there are exactly {namesCount} employee rows in this order: {nameList}.",
+    "The table ends AFTER the row labeled \"{lastEmployee}\" \u2014 that final row IS included in your output.",
+    "Read ONLY the employee rows (not the header) in the RIGHT column from top to bottom.",
+    "Each cell contains: a time range (e.g. 9:00-5:30), RTO, PTO, x (day off), or is blank.",
+    "X marks may be in RED ink or any color \u2014 treat ANY X or checkmark as \"x\".",
+    "Ignore any hours number shown in a cell \u2014 only report the shift label.",
+    "Reply with ONLY a JSON array of exactly {namesCount} strings, top to bottom:",
+    "[\"value1\", \"value2\", ...]",
+    "Use \"\" for blank cells. No explanation, no markdown."
+  ],
+
+  "full_image_column": [
+    "Look at this work schedule image. Focus ONLY on the {dateLabel} column.",
+    "Note: this is a photograph of a printed grid \u2014 lines may not be perfectly straight",
+    "or orthogonal due to camera angle. Read each cell by visual context.",
+    "There are exactly {namesCount} employee rows in this order: {nameList}.",
+    "The table ends at the row labeled \"{lastEmployee}\".",
+    "Read each cell in that column from top to bottom, one value per employee row.",
+    "Each cell contains: a time range (e.g. 9:00-5:30), RTO, PTO, x (day off), or is blank.",
+    "X marks may be printed in RED ink or any other color \u2014 treat ANY X or checkmark as \"x\".",
+    "Ignore any hours number shown in a cell \u2014 only report the shift label.",
+    "Reply with ONLY a JSON array of exactly {namesCount} strings, top to bottom:",
+    "[\"value1\", \"value2\", ...]",
+    "Use \"\" for blank cells. No explanation, no markdown."
+  ],
+
+  "reinforced_column": [
+    "You are looking at a narrow two-column strip from a weekly work schedule image.",
+    "Note: this is a photograph of a printed grid \u2014 lines may not be perfectly straight",
+    "or orthogonal due to camera angle. Read each cell by visual context, not by pixel",
+    "alignment alone.",
+    "The LEFT column shows employee names. The RIGHT column shows their shifts for {dateLabel}.",
+    "The top row of the RIGHT column is a HEADER showing the day name and date \u2014 SKIP IT.",
+    "Do NOT output any date (like '2025-10-30' or '11/27') as a shift value \u2014 dates are NEVER shifts.",
+    "Below the header there are exactly {namesCount} employee rows in this order: {nameList}.",
+    "The table ends AFTER the row labeled \"{lastEmployee}\" \u2014 that final row IS included in your output.",
+    "IMPORTANT: Each employee has their OWN individual shift \u2014 do NOT assume they all share the same value.",
+    "Read ONLY the employee rows (not the header) in the RIGHT column from top to bottom.",
+    "Each cell contains: a time range (e.g. 9:00-5:30), RTO, PTO, x (day off), or is blank.",
+    "X marks may be in RED ink or any color \u2014 treat ANY X or checkmark as \"x\".",
+    "Ignore any hours number shown in a cell \u2014 only report the shift label.",
+    "Reply with ONLY a JSON array of exactly {namesCount} strings, top to bottom:",
+    "[\"value1\", \"value2\", ...]",
+    "Use \"\" for blank cells. No explanation, no markdown."
+  ],
+
+  "last_employee_requery": [
+    "Look at this work schedule strip image.",
+    "\"{employeeName}\" is in the LAST employee row at the bottom of the image.",
+    "What shift does \"{employeeName}\" have on {dateLabel}?",
+    "Reply with ONLY the shift value: a time range (e.g. 9:00-5:30), RTO, PTO, x, or \"\" for blank.",
+    "No explanation, no markdown, just the value."
+  ],
+
+  "penultimate_employee_requery": [
+    "Look at this work schedule strip image.",
+    "\"{penultEmployee}\" is the second-to-last employee row, just ABOVE \"{lastEmployee}\".",
+    "What shift does \"{penultEmployee}\" have on {dateLabel}?",
+    "Reply with ONLY the shift value: a time range (e.g. 9:00-5:30), RTO, PTO, x, or \"\" for blank.",
+    "No explanation, no markdown, just the value."
+  ],
+
+  "extract_header": [
+    "Look at this work schedule image.",
+    "Find the header row that contains the 7 dates of the week.",
+    "The week runs Sunday through Saturday (7 days).",
+    "Reply with ONLY a JSON object \u2014 no markdown, no extra text:",
+    "{\"Month\":\"<full month name of Sunday>\",\"Year\":<4-digit year>,\"Dates\":[\"YYYY-MM-DD\",\"YYYY-MM-DD\",\"YYYY-MM-DD\",\"YYYY-MM-DD\",\"YYYY-MM-DD\",\"YYYY-MM-DD\",\"YYYY-MM-DD\"]}",
+    "Exactly 7 dates Sun\u2192Sat. Convert M/D/YY to YYYY-MM-DD. Do NOT use today's date."
+  ],
+
+  "extract_names": [
+    "Look at this work schedule image.",
+    "Note: this is a photograph of a printed grid \u2014 the grid lines may not be perfectly",
+    "straight or orthogonal due to camera angle and perspective distortion. Read each row",
+    "by visual context, not pixel-perfect alignment.",
+    "Find the MAIN employee scheduling table (the large table at the top).",
+    "List every employee name from the leftmost column of that table, one name per line.",
+    "Go top to bottom. Stop before any secondary or totals table.",
+    "Spell each name EXACTLY character by character as it appears in the image.",
+    "Output ONLY the names \u2014 no numbers, no extra text, no punctuation."
+  ],
+
+  "extract_names_known_names_suffix": "Known employee names for this schedule (if you see one of these, use this exact spelling): {knownNames}. Do not invent names not on this list unless they are clearly visible.",
+
+  "extract_names_additional_hints_suffix": "Spelling reference from related schedules (use these exact spellings if you see them, but also list ANY other names clearly visible): {additionalHints}.",
+
+  "extract_names_ocr_fragments_suffix": "OCR detected these partial text fragments from the name column of this image (they may be truncated or split): {ocrFragments}. Use these as anchors \u2014 every fragment likely corresponds to an employee row. Identify the full name for each fragment, and include ANY additional names visually present that OCR may have missed entirely.",
+
+  "extract_x_marks": [
+    "Look at this work schedule image.",
+    "Note: this is a photograph of a printed grid \u2014 lines may not be perfectly straight",
+    "or orthogonal due to camera angle. Read each cell by visual context.",
+    "For each employee listed below, identify ONLY the day columns that contain an X mark",
+    "or checkmark symbol \u2014 these indicate a day off. X marks may be red, black, or any color.",
+    "Employees: {nameList}.",
+    "Reply with ONLY this JSON (no markdown, no explanation):",
+    "{",
+    "  \"<EmployeeName>\": [\"<DayName>\", ...],",
+    "  ...",
+    "}",
+    "Day names are: Sun, Mon, Tue, Wed, Thu, Fri, Sat.",
+    "Include ALL employees. Use [] if no days have an X mark.",
+    "Do NOT include days with time ranges, RTO, PTO, or blank cells \u2014 ONLY X marks."
+  ],
+
+  "extract_column": [
+    "Look at this work schedule image. Focus ONLY on the {dateLabel} column.",
+    "There are exactly {namesCount} employee rows in this order: {nameList}.",
+    "The table ends at the row labeled \"{lastEmployee}\".",
+    "Read each cell in that column from top to bottom, one value per employee row.",
+    "Each cell contains: a time range (e.g. 9:00-5:30), RTO, PTO, x (day off), or is blank.",
+    "X marks may be printed in RED ink or any other color \u2014 treat ANY X or checkmark as \"x\".",
+    "Ignore any hours number shown in a cell \u2014 only report the shift label.",
+    "Reply with ONLY a JSON array of exactly {namesCount} strings, top to bottom:",
+    "[\"value1\", \"value2\", ...]",
+    "Use \"\" for blank cells. No explanation, no markdown."
+  ],
+
+  "extract_column_anchored": [
+    "Look at this work schedule image. You must read the {dateLabel} column.",
+    "IMPORTANT: Find the column whose header shows the date '{md}' printed at the top of the table. Do NOT guess the column by day-of-week position \u2014 locate the printed label '{md}' in the header row, then read the cells directly below it.",
+    "There are exactly {namesCount} employee rows in this order: {nameList}.",
+    "The table ends at the row labeled \"{lastEmployee}\".",
+    "Read each cell in that column from top to bottom, one value per employee row.",
+    "Each cell contains: a time range (e.g. 9:00-5:30), RTO, PTO, x (day off), or is blank.",
+    "X marks may be printed in RED ink or any other color \u2014 treat ANY X or checkmark as \"x\".",
+    "Ignore any hours number shown in a cell \u2014 only report the shift label.",
+    "Reply with ONLY a JSON array of exactly {namesCount} strings, top to bottom:",
+    "[\"value1\", \"value2\", ...]",
+    "Use \"\" for blank cells. No explanation, no markdown."
+  ],
+
+  "extract_all_shifts": [
+    "Look at this work schedule image.",
+    "Extract shift values for these {namesCount} employees: {nameList}.",
+    "For each employee, find their row in the main scheduling table and read each day column carefully.",
+    "The main table ends at the row labeled \"{lastEmployee}\" \u2014 do NOT read the secondary table below it.",
+    "The 7 day columns are: {dayStr}.",
+    "Each cell shows one of: a time range (e.g. 9:00-5:30), RTO, PTO, x (day off), or is blank.",
+    "Each cell also shows an hours number \u2014 IGNORE the number, only report the shift label.",
+    "X marks may be printed in RED ink or any other color \u2014 treat ANY X or checkmark (red, black, or any color) as \"x\".",
+    "\"x\" and \"\" (blank) are DIFFERENT: an X mark in a cell = \"x\"; a completely empty cell = \"\".",
+    "Reply with ONLY this JSON (no markdown, no explanation). Use day names as keys:",
+    "{",
+    "  \"<EmployeeName>\": {dayKeyExample},",
+    "  ...",
+    "}",
+    "Rules:",
+    "- Use empty string \"\" ONLY when a cell is completely empty/blank.",
+    "- Use \"x\" when a cell contains an X mark or checkmark (day off).",
+    "- Copy time ranges exactly as written (e.g. \"9:00-5:30\", \"10:00-6:30\", \"12:00-4:30\").",
+    "- Use \"RTO\" or \"PTO\" when those labels appear in the cell.",
+    "- Do NOT include hours numbers in values. Do NOT omit any employee or any day.",
+    "- Include ALL employees. Use exactly these day-name keys: {dayKeyList}.",
+    "- IMPORTANT: Any date column may be entirely blank for ALL employees (e.g., a public holiday). If every employee in a column has no shift, output \"\" for all of them \u2014 do NOT redistribute values from an adjacent column to fill a blank column.",
+    "- CRITICAL: Do NOT shift values one column to the right. Each cell value belongs ONLY in the column whose header is directly above that cell. If you read a value from the Mon column, it must be stored under the \"Mon\" key \u2014 never under \"Tue\" or any other key. Read each column header and its cells independently."
+  ],
+
+  "extract_row": [
+    "Look at this work schedule image. Find the row labeled \"{employeeName}\".",
+    "The 7 day columns are: {dayStr}.",
+    "Each cell shows a shift label or is blank. Ignore the hours number in each cell.",
+    "\"x\" = X mark (day off). \"\" = completely empty cell. RTO/PTO as written.",
+    "Reply with ONLY this JSON (no markdown, no explanation):",
+    "{\"Sun\":\"...\",\"Mon\":\"...\",\"Tue\":\"...\",\"Wed\":\"...\",\"Thu\":\"...\",\"Fri\":\"...\",\"Sat\":\"...\"}",
+    "Copy time ranges exactly (e.g. \"9:00-5:30\", \"10:00-6:30\"). Do not explain."
+  ]
+}
