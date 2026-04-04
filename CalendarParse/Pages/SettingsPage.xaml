@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage
+    x:Class="CalendarParse.Pages.SettingsPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    Title="Settings">
+
+    <ScrollView>
+        <VerticalStackLayout Padding="24" Spacing="16">
+
+            <!-- Employee Name -->
+            <Label Text="Your Name (as it appears on the schedule)" FontAttributes="Bold" />
+            <Entry x:Name="NameEntry"
+                   Placeholder="e.g. John Smith"
+                   Keyboard="Text"
+                   TextChanged="OnNameChanged" />
+
+            <!-- Server URL -->
+            <Label Text="Server IP:PORT" FontAttributes="Bold" Margin="0,8,0,0" />
+            <Entry x:Name="ServerUrlEntry"
+                   Placeholder="e.g. 192.168.1.10:5150"
+                   Keyboard="Url"
+                   TextChanged="OnServerChanged" />
+
+            <!-- Server Key -->
+            <Label Text="Server Key" FontAttributes="Bold" />
+            <Entry x:Name="ServerKeyEntry"
+                   Placeholder="Paste key from server console"
+                   IsPassword="True"
+                   TextChanged="OnServerChanged" />
+
+            <!-- Position Correction -->
+            <Label Text="Position Correction" FontAttributes="Bold" Margin="0,8,0,0" />
+            <HorizontalStackLayout Spacing="12">
+                <Switch x:Name="PositionOptInSwitch" Toggled="OnPositionOptInToggled" />
+                <Label Text="Show drag-to-correct overlay when reviewing shifts" VerticalOptions="Center" />
+            </HorizontalStackLayout>
+
+            <!-- Quiet Hours -->
+            <Label Text="Quiet Hours" FontAttributes="Bold" Margin="0,8,0,0" />
+            <HorizontalStackLayout Spacing="12">
+                <Switch x:Name="QuietHoursSwitch" Toggled="OnQuietHoursToggled" />
+                <Label Text="Hold notifications until window opens" VerticalOptions="Center" />
+            </HorizontalStackLayout>
+
+            <Grid ColumnDefinitions="*,Auto,*" ColumnSpacing="8"
+                  IsVisible="{Binding Source={x:Reference QuietHoursSwitch}, Path=IsToggled}">
+                <TimePicker x:Name="QuietStartPicker" Grid.Column="0" Format="HH:mm" />
+                <Label Text="to" Grid.Column="1" VerticalOptions="Center" />
+                <TimePicker x:Name="QuietEndPicker" Grid.Column="2" Format="HH:mm" />
+            </Grid>
+
+            <!-- Save -->
+            <Button x:Name="SaveBtn"
+                    Text="Save"
+                    IsEnabled="False"
+                    Clicked="OnSaveClicked"
+                    Margin="0,16,0,0" />
+
+            <Label x:Name="StatusLabel"
+                   IsVisible="False"
+                   HorizontalOptions="Center" />
+
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

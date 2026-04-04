@@ -31,10 +31,18 @@ namespace CalendarParse.Services
             var textResult = (Text)(object)javaResult;
 
             var elements = new List<OcrElement>();
+            var textBlocks = textResult.TextBlocks;
 
-            Log.Debug("CalParse.OCR", $"Image size: {bitmap.Width}x{bitmap.Height}  |  TextBlocks: {textResult.TextBlocks?.Count ?? 0}");
+            Log.Debug("CalParse.OCR", $"Image size: {bitmap.Width}x{bitmap.Height}  |  TextBlocks: {textBlocks?.Count ?? 0}");
 
-            foreach (var block in textResult.TextBlocks)
+            if (textBlocks is null)
+            {
+                bitmap.Recycle();
+                recognizer.Close();
+                return elements;
+            }
+
+            foreach (var block in textBlocks)
             {
                 if (block?.Lines is null) continue;
                 foreach (var line in block.Lines)

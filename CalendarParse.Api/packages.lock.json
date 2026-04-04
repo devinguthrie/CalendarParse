@@ -1,0 +1,139 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0-windows10.0.19041": {
+      "Microsoft.EntityFrameworkCore.Sqlite": {
+        "type": "Direct",
+        "requested": "[9.0.3, )",
+        "resolved": "9.0.3",
+        "contentHash": "M9iJfMa9f/kHsjq1CIW14vDaKZ3qJgqJtN8/4sw5bSZpEk9RvXAwLXpUVZecPJpwmN3/HqTHIXiXlMsL84ET4w==",
+        "dependencies": {
+          "Microsoft.EntityFrameworkCore.Sqlite.Core": "9.0.3",
+          "Microsoft.Extensions.DependencyModel": "9.0.3",
+          "SQLitePCLRaw.bundle_e_sqlite3": "2.1.10",
+          "SQLitePCLRaw.core": "2.1.10"
+        }
+      },
+      "Emgu.CV": {
+        "type": "Transitive",
+        "resolved": "4.12.0.5764",
+        "contentHash": "629jbQI7SjB6EviVwunEliIojnap2Pa239/phyjkrhMoQNJk43dWJBOhH4U9nLsOsKLSX4Xyv82t38xcXq4qyQ=="
+      },
+      "Emgu.CV.runtime.windows": {
+        "type": "Transitive",
+        "resolved": "4.12.0.5764",
+        "contentHash": "RCOAc9kmxZp5F050ygd3pLTBFnSZWdxai/Dnyr/Q2EEV2R4JgXu+OoB4fr83GLeytTkll9WAeVWLRTDve9ijIA==",
+        "dependencies": {
+          "Emgu.CV": "4.12.0",
+          "Emgu.runtime.windows.msvc.rt.arm64": "19.44.35214",
+          "Emgu.runtime.windows.msvc.rt.x64": "19.44.35214",
+          "Emgu.runtime.windows.msvc.rt.x86": "19.44.35214"
+        }
+      },
+      "Emgu.runtime.windows.msvc.rt.arm64": {
+        "type": "Transitive",
+        "resolved": "19.44.35214",
+        "contentHash": "ugNJFVV01rvFAnS3swIm9TJiK/x2AlNZXOCB4bwp7U5gLZ35eUV62mnHqG6/yRk/I/k9aUjZZ/zwHFrHrgZyvg=="
+      },
+      "Emgu.runtime.windows.msvc.rt.x64": {
+        "type": "Transitive",
+        "resolved": "19.44.35214",
+        "contentHash": "QGKE7bohY7tLy7iBMJTY+VXQbM2nLVA7AFQLrqPHIK7bWTOPgeIbITefjUwYyxD/wFXwj93GOQq7VIAzDyNztA=="
+      },
+      "Emgu.runtime.windows.msvc.rt.x86": {
+        "type": "Transitive",
+        "resolved": "19.44.35214",
+        "contentHash": "Cgs6eutsi7s4vO79djADbOpXdKG5x1tq4R4hq5wDIv58FimSQyIiRvnkCbZzRMUcIpXOX09W4y7P2XKS9UfSYw=="
+      },
+      "Microsoft.Data.Sqlite.Core": {
+        "type": "Transitive",
+        "resolved": "9.0.3",
+        "contentHash": "rhNmI4KqeL6bOtZ7KwLVZLjrj0Bnf0PFq5Nlv2uOj9n1UuPYTbJaa816EJH5Hp5FM04H2iUcFtmmvqrl3xRCmA==",
+        "dependencies": {
+          "SQLitePCLRaw.core": "2.1.10"
+        }
+      },
+      "Microsoft.EntityFrameworkCore": {
+        "type": "Transitive",
+        "resolved": "9.0.3",
+        "contentHash": "ji6fWE8bFWTvqaMue49RSCcAeqlec13hAbitTBZyz/RmYsQDhqM9VkWUoXS1x1mjcsyWjc5EQr2XyuAkwp0eNQ==",
+        "dependencies": {
+          "Microsoft.EntityFrameworkCore.Abstractions": "9.0.3",
+          "Microsoft.EntityFrameworkCore.Analyzers": "9.0.3"
+        }
+      },
+      "Microsoft.EntityFrameworkCore.Abstractions": {
+        "type": "Transitive",
+        "resolved": "9.0.3",
+        "contentHash": "HQH7HgwTl6IyasW7t6F2+ihuHLDmf9+8XaS41v8VHN5Z7x5ZMQIiHCbwxme4P5ICAjBG6VsWcjMCoh4fHbEwJg=="
+      },
+      "Microsoft.EntityFrameworkCore.Analyzers": {
+        "type": "Transitive",
+        "resolved": "9.0.3",
+        "contentHash": "M+iOxejD3HqPV8/KE148wIehHA3cmMF+FgnpiN8CFB7DLokVSKQPPrwtHjcrNYJ/BDEssviEPNok/jtQWxj7xA=="
+      },
+      "Microsoft.EntityFrameworkCore.Relational": {
+        "type": "Transitive",
+        "resolved": "9.0.3",
+        "contentHash": "xsS+5TM7M5f3tCSRaSbzouGCoIgD2zokQxBGXvf9z3DusRztWvT1NNT9XJaY2JoK1qEEDcHah8is6azYmpZhIg==",
+        "dependencies": {
+          "Microsoft.EntityFrameworkCore": "9.0.3"
+        }
+      },
+      "Microsoft.EntityFrameworkCore.Sqlite.Core": {
+        "type": "Transitive",
+        "resolved": "9.0.3",
+        "contentHash": "0jFSAf/mRAB+YoZgrIc5FaFcgBAyan6T6vYNMGJFOLpghyh8RxBfrIlupzuzl4zsFRO6xvuGwfdru1n/YkhNiw==",
+        "dependencies": {
+          "Microsoft.Data.Sqlite.Core": "9.0.3",
+          "Microsoft.EntityFrameworkCore.Relational": "9.0.3",
+          "Microsoft.Extensions.DependencyModel": "9.0.3",
+          "SQLitePCLRaw.core": "2.1.10"
+        }
+      },
+      "Microsoft.Extensions.DependencyModel": {
+        "type": "Transitive",
+        "resolved": "9.0.3",
+        "contentHash": "194P+NOekDXrPHmM2R8678T4bRfZ2isQXDDAsXKE5qI0QLUnXbwB0upljAkyxk+Kkt1DV1tV+9tHOtHEEh3ksw=="
+      },
+      "SQLitePCLRaw.bundle_e_sqlite3": {
+        "type": "Transitive",
+        "resolved": "2.1.10",
+        "contentHash": "UxWuisvZ3uVcVOLJQv7urM/JiQH+v3TmaJc1BLKl5Dxfm/nTzTUrqswCqg/INiYLi61AXnHo1M1JPmPqqLnAdg==",
+        "dependencies": {
+          "SQLitePCLRaw.lib.e_sqlite3": "2.1.10",
+          "SQLitePCLRaw.provider.e_sqlite3": "2.1.10"
+        }
+      },
+      "SQLitePCLRaw.core": {
+        "type": "Transitive",
+        "resolved": "2.1.10",
+        "contentHash": "Ii8JCbC7oiVclaE/mbDEK000EFIJ+ShRPwAvvV89GOZhQ+ZLtlnSWl6ksCNMKu/VGXA4Nfi2B7LhN/QFN9oBcw=="
+      },
+      "SQLitePCLRaw.lib.e_sqlite3": {
+        "type": "Transitive",
+        "resolved": "2.1.10",
+        "contentHash": "mAr69tDbnf3QJpRy2nJz8Qdpebdil00fvycyByR58Cn9eARvR+UiG2Vzsp+4q1tV3ikwiYIjlXCQFc12GfebbA=="
+      },
+      "SQLitePCLRaw.provider.e_sqlite3": {
+        "type": "Transitive",
+        "resolved": "2.1.10",
+        "contentHash": "uZVTi02C1SxqzgT0HqTWatIbWGb40iIkfc3FpFCpE/r7g6K0PqzDUeefL6P6HPhDtc6BacN3yQysfzP7ks+wSQ==",
+        "dependencies": {
+          "SQLitePCLRaw.core": "2.1.10"
+        }
+      },
+      "calendarparse.cli": {
+        "type": "Project",
+        "dependencies": {
+          "CalendarParse.Core": "[1.0.0, )",
+          "Emgu.CV": "[4.12.0.5764, )",
+          "Emgu.CV.runtime.windows": "[4.12.0.5764, )"
+        }
+      },
+      "calendarparse.core": {
+        "type": "Project"
+      }
+    }
+  }
+}

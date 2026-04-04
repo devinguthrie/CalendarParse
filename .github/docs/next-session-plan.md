@@ -166,3 +166,13 @@ dotnet run --project CalendarParse.Cli --no-build -- "tmp-im5" --test --model qw
 5. **Update benchmark-loop.ps1 system prompt** — currently produces only malformed proposals (12/12 failures); update with current 22-error taxonomy, corrected Thu Oct30 root cause (highlighted cell, not column boundary), and guidance on exact-match search strings
 6. **Thu Oct30 cluster (6 errors)** — ~~column boundary bug~~ (**confirmed irreducible with re-query**); visual anchor (green highlighted Andee cell) cannot be overcome at temp=0; would require image color-masking preprocessing or fine-tuning; defer unless more training data available
 7. **OCR pre-fill (deferred)** — blocked until all employees have reliable Y anchors; do not attempt until `nameToYEarly` is populated for all 11 IM(1) employees
+
+
+## From Research 
+
+1. zai-org/GLM-OCR — a brand-new 0.9B model from Z.ai — just hit #1 on OmniDocBench V1.5 (94.62 score), specifically excelling at complex tables, grids, code blocks, and varied layouts. It runs on 1.5GB VRAM (sub-1GB quantized), deploys via Ollama in one command, and outputs structured JSON directly. This is the most directly relevant new release for CalendarParse — work schedules are essentially grid documents, and GLM-OCR's two-stage layout+OCR pipeline was designed exactly for this.
+Quick test: ollama pull glm-ocr → feed it a work schedule image → see if it returns usable structured output before writing any custom parsing logic.
+2. Qwen3-VL (GitHub) dropped in late 2025 and is now the strongest open-source VLM family available. The 235B MoE variant rivals GPT-5 and Gemini 2.5 Pro; the 7B/8B models are very capable and runnable locally via Ollama. Strong structured JSON extraction from documents.
+3. Qwen2.5-VL (ArXiv) remains the most battle-tested option for form/table extraction. The document parsing docs are thorough. A fine-tune of the 7B on W2 forms is a useful reference: chrisalehman/ai-document-extraction.
+4. Industry pattern shift: Companies are replacing OCR+rules with single-step VLM pipelines. The key technique — include a JSON schema in the prompt — is reporting ~100% structural consistency in production. If CalendarParse isn't already doing this, it's the single highest-leverage change to try.
+5. Microsoft Table Transformer (GitHub) received updates through May 2025. Still the go-to if you need a dedicated, lightweight table detection model rather than a full VLM.
