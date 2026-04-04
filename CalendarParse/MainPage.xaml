@@ -4,7 +4,7 @@
              x:Class="CalendarParse.MainPage"
              Title="CalendarParse">
 
-    <Grid RowDefinitions="Auto,*" Padding="16">
+    <Grid RowDefinitions="Auto,Auto,*" Padding="16">
 
         <!-- ── Controls ───────────────────────────────────────── -->
         <VerticalStackLayout Grid.Row="0" Spacing="12">
@@ -61,15 +61,56 @@
                    TextColor="{StaticResource Gray500}"
                    HorizontalOptions="Center"
                    IsVisible="False" />
+
+                <Button x:Name="OverlayHarnessBtn"
+                    AutomationId="OverlayHarnessBtn"
+                    Text="Open Overlay Harness"
+                    Clicked="OnOpenOverlayHarnessClicked"
+                    IsVisible="False"
+                    Background="{StaticResource Gray300}" />
         </VerticalStackLayout>
 
+        <!-- ── Active job card ───────────────────────────────── -->
+        <Border x:Name="ActiveJobCard"
+                Grid.Row="1"
+                IsVisible="False"
+                Padding="14,10"
+                Margin="0,8,0,0"
+                Background="{AppThemeBinding Light=#E3F2FD, Dark=#1A2A3A}"
+                StrokeThickness="0"
+                StrokeShape="RoundRectangle 10">
+            <Border.GestureRecognizers>
+                <TapGestureRecognizer Tapped="OnActiveJobCardTapped" />
+            </Border.GestureRecognizers>
+            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+                <ActivityIndicator Grid.Column="0"
+                                   IsRunning="True"
+                                   WidthRequest="20" HeightRequest="20"
+                                   VerticalOptions="Center" />
+                <VerticalStackLayout Grid.Column="1" Spacing="2" VerticalOptions="Center">
+                    <Label Text="Processing schedule…"
+                           FontAttributes="Bold"
+                           FontSize="13" />
+                    <Label Text="Tap to view in History"
+                           TextColor="{StaticResource Gray500}"
+                           FontSize="11" />
+                </VerticalStackLayout>
+                <Label Grid.Column="2"
+                       Text="›"
+                       FontSize="18"
+                       TextColor="{StaticResource Primary}"
+                       VerticalOptions="Center" />
+            </Grid>
+            </Border>
+
         <!-- ── Results ───────────────────────────────────────── -->
-        <ScrollView Grid.Row="1" Margin="0,12,0,0">
+        <ScrollView Grid.Row="2" Margin="0,12,0,0">
             <Label x:Name="ResultLabel"
                    Text=""
-                   FontFamily="Courier New"
+                   FontFamily="monospace"
                    FontSize="12"
-                   LineBreakMode="WordWrap" />
+                   LineBreakMode="WordWrap"
+                   Grid.Row="2" />
         </ScrollView>
 
     </Grid>

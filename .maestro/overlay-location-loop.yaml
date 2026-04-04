@@ -1,0 +1,57 @@
+appId: ${APP_ID}
+---
+# Overlay regression scaffold:
+# Time Review -> Location Review -> Location Edit Mode.
+#
+# Usage example:
+# maestro test .maestro/overlay-location-loop.yaml -e APP_ID=com.companyname.calendarparse
+
+- launchApp
+
+# Dismiss debug/compatibility warning dialog shown on some Android builds.
+- runFlow:
+    when:
+      visible: "Android App Compatibility"
+    commands:
+      - tapOn: "OK"
+
+# Open deterministic harness session.
+- assertVisible:
+    id: "OverlayHarnessBtn"
+- tapOn:
+    id: "OverlayHarnessBtn"
+
+# Overlay screen ready-state checks
+- assertVisible:
+    id: "ProcessScheduleBtn"
+- assertVisible: "👍 Confirm Time"
+- tapOn: "👍 Confirm Time"
+- assertVisible: "📍 Confirm Location"
+- assertVisible:
+    id: "EditActionBtn"
+- tapOn:
+    id: "EditActionBtn"
+- assertVisible: "🔓 Lock Pan"
+
+# Pan lock cycle: lock -> unlock -> pan -> relock, then ensure flow state remains stable.
+- tapOn: "🔓 Lock Pan"
+- assertVisible: "🔒 Unlock Pan"
+- tapOn: "🔒 Unlock Pan"
+- assertVisible: "🔓 Lock Pan"
+- tapOn: "🔓 Lock Pan"
+- assertVisible: "🔒 Unlock Pan"
+- assertVisible: "📍 Confirm Location"
+
+# Zoom lock toggle cycle with post-condition assertion.
+- tapOn: "🔓"
+- assertVisible: "🔒"
+- tapOn: "🔒"
+- assertVisible: "🔓"
+- assertVisible: "📍 Confirm Location"
+
+# Optional end-state check if flow confirms location.
+- runFlow:
+    when:
+      visible: "📍 Confirm Location"
+    commands:
+      - tapOn: "📍 Confirm Location"

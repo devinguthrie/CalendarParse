@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage
+    x:Class="CalendarParse.Pages.MonitorSetupPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    Title="Notification Monitor">
+
+    <ScrollView>
+        <VerticalStackLayout Padding="24" Spacing="16">
+
+            <Label Text="Automatically detect when your boss sends a schedule image."
+                   TextColor="{StaticResource Gray500}" />
+
+            <!-- Permission status -->
+           <Border x:Name="PermissionBanner"
+                  Background="#FFF3CD"
+                  Padding="12"
+                  StrokeThickness="0"
+                  StrokeShape="RoundRectangle 8">
+                <VerticalStackLayout Spacing="8">
+                    <Label Text="⚠ Notification access required"
+                           FontAttributes="Bold" />
+                    <Label Text="CalendarParse needs notification access to detect schedule images in your chat apps." />
+                    <Button Text="Open Notification Access Settings"
+                            Clicked="OnOpenPermissionSettingsClicked" />
+                </VerticalStackLayout>
+                     </Border>
+
+            <!-- App package -->
+            <Label Text="Messaging App (package name)" FontAttributes="Bold" Margin="0,8,0,0" />
+            <Entry x:Name="PackageEntry"
+                   Placeholder="e.g. com.google.android.apps.messaging"
+                   Keyboard="Text"
+                   TextChanged="OnFieldChanged" />
+            <Label Text="Common: com.google.android.apps.messaging · com.whatsapp · org.telegram.messenger"
+                   FontSize="12" TextColor="{StaticResource Gray500}" />
+
+            <!-- Sender name -->
+            <Label Text="Contact or Group Name" FontAttributes="Bold" Margin="0,8,0,0" />
+            <Entry x:Name="SenderEntry"
+                   Placeholder="e.g. Boss, Work Group (leave blank for any)"
+                   Keyboard="Text"
+                   TextChanged="OnFieldChanged" />
+
+            <!-- Save -->
+            <Button x:Name="SaveBtn"
+                    Text="Save Monitor Settings"
+                    IsEnabled="False"
+                    Clicked="OnSaveClicked"
+                    Margin="0,16,0,0" />
+
+            <Label x:Name="StatusLabel"
+                   IsVisible="False"
+                   HorizontalOptions="Center" />
+
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

@@ -1,0 +1,377 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage
+    x:Class="CalendarParse.Pages.ConfirmationPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    Title="Confirm Schedule">
+
+    <Grid RowDefinitions="Auto,*,Auto">
+
+        <!-- ── Progress header (below title bar) ───────────────────────────── -->
+        <Grid x:Name="ProgressHeader"
+              Grid.Row="0"
+              Padding="8,6"
+              ColumnDefinitions="Auto,*,Auto"
+              IsVisible="False">
+            <Button x:Name="PrevBubbleBtn"
+                Grid.Column="0"
+                Text="◀"
+                WidthRequest="40"
+                HeightRequest="34"
+                FontSize="14"
+                Clicked="OnPrevBubbleClicked" />
+
+            <Label x:Name="HeaderProgressLabel"
+               Grid.Column="1"
+               HorizontalOptions="Center"
+               VerticalOptions="Center"
+               FontAttributes="Bold"
+               FontSize="14"
+               Text="0/0 confirmed" />
+
+            <Button x:Name="NextBubbleBtn"
+                Grid.Column="2"
+                Text="▶"
+                WidthRequest="40"
+                HeightRequest="34"
+                FontSize="14"
+                Clicked="OnNextBubbleClicked" />
+        </Grid>
+
+        <!-- ── Loading state ───────────────────────────────────────────────── -->
+        <VerticalStackLayout x:Name="LoadingPanel"
+                             Grid.Row="1"
+                             VerticalOptions="Center"
+                             HorizontalOptions="Center"
+                             Spacing="16"
+                             IsVisible="True">
+            <ActivityIndicator IsRunning="True" WidthRequest="48" HeightRequest="48" />
+            <Label x:Name="LoadingLabel"
+                   Text="Checking server…"
+                   HorizontalOptions="Center"
+                   FontSize="16" />
+            <Label x:Name="ProgressLabel"
+                   IsVisible="False"
+                   HorizontalOptions="Center"
+                   FontSize="13"
+                   TextColor="{StaticResource Gray500}" />
+        </VerticalStackLayout>
+
+        <!-- ── Share prompt ─────────────────────────────────────────────────── -->
+        <VerticalStackLayout x:Name="SharePromptPanel"
+                             Grid.Row="1"
+                             VerticalOptions="Center"
+                             HorizontalOptions="Center"
+                             Spacing="16"
+                             Padding="24"
+                             IsVisible="False">
+            <Label Text="Share the schedule image to continue"
+                   FontSize="18"
+                   FontAttributes="Bold"
+                   HorizontalOptions="Center" />
+            <Label Text="Long-press the schedule image in your messaging app → Share → CalendarParse"
+                   HorizontalOptions="Center"
+                   HorizontalTextAlignment="Center"
+                   TextColor="{StaticResource Gray500}" />
+            <Button x:Name="OpenAppBtn"
+                    Text="Open Messaging App"
+                    Clicked="OnOpenMessagingAppClicked"
+                    HorizontalOptions="Center" />
+            <Button Text="Import from Gallery Instead"
+                    Clicked="OnImportClicked"
+                    Background="Transparent"
+                    TextColor="{StaticResource Primary}"
+                    HorizontalOptions="Center" />
+        </VerticalStackLayout>
+
+        <!-- ── Overlay confirmation ─────────────────────────────────────────── -->
+        <Grid x:Name="OverlayPanel"
+              Grid.Row="1"
+              IsVisible="False">
+
+            <!-- Zoomable schedule image -->
+            <ScrollView x:Name="ImageScrollView"
+                        AutomationId="ImageScrollView"
+                        Scrolled="OnImageScrollViewScrolled"
+                        Orientation="Both">
+                <ScrollView.GestureRecognizers>
+                    <PinchGestureRecognizer PinchUpdated="OnImagePinched" />
+                </ScrollView.GestureRecognizers>
+                <Grid x:Name="ImageContainer">
+                    <Image x:Name="ScheduleImage"
+                           Aspect="AspectFit"
+                           HorizontalOptions="Fill"
+                           VerticalOptions="Fill" />
+
+                    <!-- Overlay canvas — bubbles drawn here in code-behind.
+                         InputTransparent so scroll/zoom gestures reach the ScrollView. -->
+                    <GraphicsView x:Name="BubbleCanvas"
+                                  HorizontalOptions="Fill"
+                                  VerticalOptions="Fill"
+                                  InputTransparent="True" />
+
+                    <Grid.GestureRecognizers>
+                        <TapGestureRecognizer Tapped="OnImageContainerTapped" />
+                    </Grid.GestureRecognizers>
+                </Grid>
+            </ScrollView>
+
+            <!-- Drag/resize overlay — lives ABOVE the ScrollView so InputTransparent=false
+                 fully blocks scroll gestures when pan is locked. -->
+            <AbsoluteLayout x:Name="DragOverlay"
+                            HorizontalOptions="Fill"
+                            VerticalOptions="Fill"
+                            IsVisible="False"
+                            InputTransparent="True">
+
+                <!-- Always-visible border while a bubble is selected for position review -->
+                <Border x:Name="SelectedRectBorder"
+                    Stroke="Gold"
+                    StrokeThickness="3"
+                    Background="Transparent"
+                    AbsoluteLayout.LayoutFlags="None"
+                    AbsoluteLayout.LayoutBounds="0,0,100,50" />
+
+                <!-- Semi-transparent fill matching app Primary -->
+                <BoxView x:Name="SelectedRectFill"
+                     Color="Transparent"
+                         AbsoluteLayout.LayoutFlags="None"
+                         AbsoluteLayout.LayoutBounds="0,0,100,50" />
+
+                <!-- Transparent hit area — drag to move the whole rect -->
+                <BoxView x:Name="RectMoveHandle"
+                         Color="Transparent"
+                         AbsoluteLayout.LayoutFlags="None"
+                         AbsoluteLayout.LayoutBounds="0,0,100,50">
+                    <BoxView.GestureRecognizers>
+                        <PanGestureRecognizer PanUpdated="OnRectMovePanned" />
+                    </BoxView.GestureRecognizers>
+                </BoxView>
+
+                <!-- Top-left corner handle -->
+                <BoxView x:Name="CornerTL"
+                         WidthRequest="24" HeightRequest="24"
+                         Color="{StaticResource Primary}"
+                         CornerRadius="12"
+                         AbsoluteLayout.LayoutFlags="None"
+                         AbsoluteLayout.LayoutBounds="0,0,24,24">
+                    <BoxView.GestureRecognizers>
+                        <PanGestureRecognizer PanUpdated="OnCornerTLPanned" />
+                    </BoxView.GestureRecognizers>
+                </BoxView>
+
+                <!-- Top-right corner handle -->
+                <BoxView x:Name="CornerTR"
+                         WidthRequest="24" HeightRequest="24"
+                         Color="{StaticResource Primary}"
+                         CornerRadius="12"
+                         AbsoluteLayout.LayoutFlags="None"
+                         AbsoluteLayout.LayoutBounds="100,0,24,24">
+                    <BoxView.GestureRecognizers>
+                        <PanGestureRecognizer PanUpdated="OnCornerTRPanned" />
+                    </BoxView.GestureRecognizers>
+                </BoxView>
+
+                <!-- Bottom-left corner handle -->
+                <BoxView x:Name="CornerBL"
+                         WidthRequest="24" HeightRequest="24"
+                         Color="{StaticResource Primary}"
+                         CornerRadius="12"
+                         AbsoluteLayout.LayoutFlags="None"
+                         AbsoluteLayout.LayoutBounds="0,50,24,24">
+                    <BoxView.GestureRecognizers>
+                        <PanGestureRecognizer PanUpdated="OnCornerBLPanned" />
+                    </BoxView.GestureRecognizers>
+                </BoxView>
+
+                <!-- Bottom-right corner handle -->
+                <BoxView x:Name="CornerBR"
+                         WidthRequest="24" HeightRequest="24"
+                         Color="{StaticResource Primary}"
+                         CornerRadius="12"
+                         AbsoluteLayout.LayoutFlags="None"
+                         AbsoluteLayout.LayoutBounds="100,50,24,24">
+                    <BoxView.GestureRecognizers>
+                        <PanGestureRecognizer PanUpdated="OnCornerBRPanned" />
+                    </BoxView.GestureRecognizers>
+                </BoxView>
+            </AbsoluteLayout>
+
+            <!-- Bubble detail panel — shown when a bubble is tapped -->
+                <Border x:Name="BubbleDetailPanel"
+                    IsVisible="False"
+                    VerticalOptions="End"
+                    Margin="8"
+                    Padding="16"
+                    StrokeThickness="0"
+                    StrokeShape="RoundRectangle 12"
+                    Background="{AppThemeBinding Light=White, Dark=#1E1E1E}"
+                    Shadow="{Shadow Brush=Black, Offset='0,4', Radius=8, Opacity=0.2}">
+                <VerticalStackLayout Spacing="12">
+                    <Label x:Name="BubbleEmployeeLabel" FontAttributes="Bold" FontSize="15" />
+                    <Label x:Name="BubbleDateLabel" TextColor="{StaticResource Gray500}" />
+
+                    <!-- Read-only time display (shown when not editing) -->
+                    <Label x:Name="BubbleTimeLabel"
+                           TextColor="{StaticResource Gray500}"
+                           FontSize="14" />
+
+                    <!-- Editable time entry (shown only when editing) -->
+                    <Entry x:Name="BubbleTimeEntry"
+                           Placeholder="e.g. 9:00-5:00"
+                           Keyboard="Text"
+                           IsVisible="False" />
+
+                    <HorizontalStackLayout Spacing="12" HorizontalOptions="Center">
+                        <Button x:Name="ThumbsUpBtn"
+                            AutomationId="ConfirmActionBtn"
+                                Text="👍 Confirm"
+                                Clicked="OnThumbsUpClicked"
+                                Background="{StaticResource Primary}" />
+                        <Button x:Name="ThumbsDownBtn"
+                            AutomationId="EditActionBtn"
+                                Text="✏️ Edit"
+                                Clicked="OnThumbsDownClicked"
+                                Background="{StaticResource Gray300}" />
+                        <Button x:Name="EditPositionBtn"
+                            AutomationId="EditPositionActionBtn"
+                                Text="📍 Edit Position"
+                                Clicked="OnEditPositionClicked"
+                                IsVisible="False"
+                                Background="{StaticResource Gray300}" />
+                    </HorizontalStackLayout>
+
+                    <HorizontalStackLayout x:Name="EditActions"
+                                           Spacing="12"
+                                           HorizontalOptions="Center"
+                                           IsVisible="False">
+                        <Button Text="Save"
+                                Clicked="OnEditSaveClicked"
+                            Background="Green"
+                                TextColor="White" />
+                        <Button Text="Dismiss"
+                                Clicked="OnEditDismissClicked"
+                            Background="{StaticResource Gray300}" />
+                    </HorizontalStackLayout>
+                </VerticalStackLayout>
+                    </Border>
+
+        </Grid>
+
+        <!-- ── Right-side zoom controls (outside image scroll area) ─────────── -->
+        <VerticalStackLayout x:Name="ZoomControlsPanel"
+                             Grid.Row="1"
+                             HorizontalOptions="End"
+                             VerticalOptions="Center"
+                             Margin="0,0,4,0"
+                             Spacing="4"
+                             IsVisible="False"
+                             Padding="4,8"
+                             Background="{AppThemeBinding Light=#E8FFFFFF, Dark=#E8333333}">
+            <!-- Wrapper gives layout the correct visual footprint for the rotated slider -->
+            <Grid WidthRequest="44" HeightRequest="180">
+                <Slider x:Name="ZoomSlider"
+                        Minimum="1"
+                        Maximum="4"
+                        Value="1"
+                        Rotation="-90"
+                        WidthRequest="180"
+                        HeightRequest="44"
+                        HorizontalOptions="Center"
+                        VerticalOptions="Center"
+                        ValueChanged="OnZoomSliderValueChanged" />
+            </Grid>
+            <Button x:Name="ZoomLockBtn"
+                    AutomationId="ZoomLockBtn"
+                    Text="🔓"
+                    WidthRequest="44"
+                    HeightRequest="44"
+                    HorizontalOptions="Center"
+                    Clicked="OnLockZoomClicked"
+                    Background="{StaticResource Gray300}" />
+        </VerticalStackLayout>
+
+        <!-- ── Submitted state ─────────────────────────────────────────────────── -->
+        <VerticalStackLayout x:Name="SubmittedPanel"
+                             Grid.Row="1"
+                             VerticalOptions="Center"
+                             HorizontalOptions="Center"
+                             Spacing="16"
+                             Padding="24"
+                             IsVisible="False">
+            <Label Text="Schedule submitted!"
+                   FontSize="20"
+                   FontAttributes="Bold"
+                   HorizontalOptions="Center" />
+            <Label Text="Processing takes about 2 minutes.&#x0a;You'll get a notification when it's ready."
+                   HorizontalOptions="Center"
+                   HorizontalTextAlignment="Center"
+                   TextColor="{StaticResource Gray500}" />
+            <Button Text="View in History"
+                    Clicked="OnViewHistoryClicked"
+                    HorizontalOptions="Center" />
+        </VerticalStackLayout>
+
+        <!-- ── Error state ──────────────────────────────────────────────────── -->
+        <VerticalStackLayout x:Name="ErrorPanel"
+                             Grid.Row="1"
+                             VerticalOptions="Center"
+                             HorizontalOptions="Center"
+                             Spacing="16"
+                             Padding="24"
+                             IsVisible="False">
+            <Label x:Name="ErrorLabel"
+                   HorizontalOptions="Center"
+                   HorizontalTextAlignment="Center"
+                   FontSize="16"
+                   TextColor="Red" />
+            <Button Text="Retry"
+                    Clicked="OnRetryClicked"
+                    HorizontalOptions="Center" />
+        </VerticalStackLayout>
+
+        <!-- ── Bottom bar ────────────────────────────────────────────────────── -->
+        <Grid x:Name="BottomBar"
+              Grid.Row="2"
+              Padding="16,8"
+              RowDefinitions="Auto,Auto"
+              ColumnDefinitions="*,Auto,Auto"
+              IsVisible="False">
+
+            <!-- Progress label -->
+            <Label x:Name="ConfirmProgressLabel"
+                   Grid.Row="0" Grid.Column="0"
+                     IsVisible="False"
+                   VerticalOptions="Center"
+                   FontSize="13"
+                   TextColor="{StaticResource Gray500}" />
+
+            <!-- Lock Pan toggle (only visible when position rect is active) -->
+            <Button x:Name="LockPanBtn"
+                    AutomationId="LockPanBtn"
+                    Grid.Row="0" Grid.Column="1"
+                    Text="🔓 Lock Pan"
+                    Clicked="OnLockPanClicked"
+                    IsVisible="False"
+                    Margin="4,0"
+                    FontSize="12"
+                    Background="{StaticResource Gray300}" />
+
+            <Button x:Name="ProcessScheduleBtn"
+                    AutomationId="ProcessScheduleBtn"
+                    Grid.Row="0" Grid.Column="2"
+                    Text="Process Schedule"
+                    IsEnabled="False"
+                    Clicked="OnProcessScheduleClicked" />
+
+            <!-- Validation hint shown when Process Schedule is disabled -->
+            <Label x:Name="ValidationLabel"
+                                         Grid.Row="1" Grid.ColumnSpan="3"
+                   IsVisible="False"
+                   FontSize="11"
+                   TextColor="{StaticResource Gray500}"
+                   HorizontalOptions="Center" />
+        </Grid>
+
+    </Grid>
+</ContentPage>

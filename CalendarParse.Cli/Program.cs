@@ -4,6 +4,9 @@ using System.Text.Json.Serialization;
 using CalendarParse.Cli.Services;
 using CalendarParse.Models;
 using CalendarParse.Services;
+using Emgu.CV;
+using Emgu.CV.CvEnum;
+using Emgu.CV.Structure;
 
 Console.OutputEncoding = Encoding.UTF8;
 Console.InputEncoding  = Encoding.UTF8;
@@ -17,6 +20,7 @@ if (args.Length == 0 || args[0] is "-h" or "--help")
 
 string folder = args[0];
 string nameFilter    = string.Empty;
+string overlayName   = string.Empty;
 bool   testMode      = false;
 bool   visionMode    = false;
 string ollamaModel    = OllamaCalendarService.DefaultModel;
@@ -27,6 +31,8 @@ for (int i = 1; i < args.Length; i++)
 {
     if ((args[i] is "--name" or "-n") && i + 1 < args.Length)
         nameFilter = args[++i];
+    else if (args[i] is "--overlay" && i + 1 < args.Length)
+        overlayName = args[++i];
     else if (args[i] is "--test" or "-t")
         testMode = true;
     else if (args[i] is "--vision" or "-V")
@@ -159,6 +165,23 @@ foreach (var imagePath in imageFiles)
         }
 
         await File.WriteAllTextAsync(outPath, jsonOnly);
+
+        // Write positions sidecar (enables overlay rendering, now and in future runs)
+        if (hybridParser?.LastRunPositions is { } positions)
+        {
+            string posPath = Path.Combine(folder, name + ".positions.json");
+            await File.WriteAllTextAsync(posPath,
+                JsonSerializer.Serialize(positions, new JsonSerializerOptions { WriteIndented = true }));
+
+            if (!string.IsNullOrEmpty(overlayName))
+            {
+                string? overlayPath = RenderOverlay(rawBytes, jsonOnly, positions, overlayName, folder, name);
+                if (overlayPath is not null)
+                    Console.Error.WriteLine($"      overlay -> {Path.GetFileName(overlayPath)}");
+                else
+                    Console.Error.WriteLine($"      overlay -> employee '{overlayName}' not found or no position data");
+            }
+        }
 
         // Save full debug report for tuning
         string debugPath = Path.Combine(folder, name + ".debug.txt");
@@ -304,6 +327,101 @@ static string ExtractJson(string output)
     }
     // Fallback: return the whole output
     return output.Trim();
+}
+
+/// <summary>
+/// Draws each day's guessed shift value on the original image at the spatial position
+/// of that employee's cell and writes a _overlay_{name}.jpg sidecar.
+/// Returns the output path on success, null if the employee was not found or had no position data.
+/// </summary>
+static string? RenderOverlay(
+    byte[] imageBytes,
+    string outputJson,
+    CellPositions positions,
+    string overlayName,
+    string folder,
+    string imageName)
+{
+    using var doc = JsonDocument.Parse(outputJson);
+    if (!doc.RootElement.TryGetProperty("Employees", out var emps)) return null;
+
+    // Find employee by case-insensitive contains match
+    string? empName = null;
+    JsonElement empEl = default;
+    foreach (var e in emps.EnumerateArray())
+    {
+        string n = e.TryGetProperty("Name", out var nProp) ? nProp.GetString() ?? "" : "";
+        if (n.Contains(overlayName, StringComparison.OrdinalIgnoreCase))
+        { empName = n; empEl = e; break; }
+    }
+    if (empName is null) return null;
+
+    // Look up the employee's row; fall back to a case-insensitive scan in case
+    // JSON round-trip changed the casing of the dictionary key.
+    EmployeeRow? empRow = null;
+    if (positions.Rows.TryGetValue(empName, out var exactRow))
+        empRow = exactRow;
+    else
+        foreach (var kv in positions.Rows)
+            if (kv.Key.Equals(empName, StringComparison.OrdinalIgnoreCase))
+            { empRow = kv.Value; break; }
+    if (empRow is null) return null;
+
+    // Prefer CompareDisplayY (clearly above cell) so the label doesn't cover the original content.
+    // Fall back to EstimatedCellY only if CompareDisplayY is off-screen (image top was clipped).
+    int labelY = empRow.CompareDisplayY > 0
+        ? empRow.CompareDisplayY
+        : empRow.EstimatedCellY;
+
+    using var mat = new Mat();
+    CvInvoke.Imdecode(imageBytes, ImreadModes.ColorBgr, mat);
+    if (mat.IsEmpty) return null;
+
+    if (!empEl.TryGetProperty("Shifts", out var shifts)) return null;
+
+    int dayIdx = 0;
+    foreach (var shift in shifts.EnumerateArray())
+    {
+        if (positions.Columns.TryGetValue(dayIdx, out var col))
+        {
+            string shiftVal = shift.TryGetProperty("Shift", out var sv) ? sv.GetString() ?? "" : "";
+            string label    = string.IsNullOrEmpty(shiftVal) ? "\u2014" : shiftVal; // em-dash for blank
+
+            int colW      = Math.Max(1, col.EstimatedCellXEnd - col.EstimatedCellXStart);
+            double scale  = Math.Clamp(colW / 130.0, 0.28, 0.5);
+            int thickness = 1;
+            int baseline  = 0;
+            var sz        = CvInvoke.GetTextSize(label, FontFace.HersheySimplex, scale, thickness, ref baseline);
+            int textX     = col.EstimatedCellXStart + (colW - sz.Width) / 2;
+            int textY     = labelY + sz.Height / 2;
+
+            // White background box for readability
+            CvInvoke.Rectangle(mat,
+                new System.Drawing.Rectangle(
+                    textX - 2, textY - sz.Height - baseline - 2,
+                    sz.Width + 4, sz.Height + baseline + 4),
+                new MCvScalar(255, 255, 255), -1);
+
+            // Dark-blue text (BGR: 180, 30, 30)
+            CvInvoke.PutText(mat, label,
+                new System.Drawing.Point(textX, textY),
+                FontFace.HersheySimplex, scale,
+                new MCvScalar(180, 30, 30), thickness);
+        }
+        dayIdx++;
+    }
+
+    // Label which employee this overlay is for
+    CvInvoke.PutText(mat, $"Overlay: {empName}",
+        new System.Drawing.Point(4, 22),
+        FontFace.HersheySimplex, 0.55,
+        new MCvScalar(180, 30, 30), 2);
+
+    string safeName = string.Concat(
+        overlayName.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries));
+    string outPath = Path.Combine(folder, $"{imageName}_overlay_{safeName}.jpg");
+    CvInvoke.Imwrite(outPath, mat);
+    return outPath;
 }
 
 /// <summary>
@@ -493,6 +611,8 @@ static void PrintUsage()
     Console.WriteLine();
     Console.WriteLine("Options:");
     Console.WriteLine("  -n, --name <filter>   Filter results to a specific employee name");
+    Console.WriteLine("  --overlay <name>      After parsing, write an overlay image showing guessed");
+    Console.WriteLine("                        shift values at each cell's position for the named employee.");
     Console.WriteLine("  -t, --test            Test mode: write .output.json and compare against .answer.json");
     Console.WriteLine("  --model <name>        Ollama model to use (default: qwen2.5vl:7b)");
     Console.WriteLine("  --preprocess <mode>   Image preprocessing before the vision model:");

@@ -4,11 +4,37 @@
     xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
     xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
     xmlns:local="clr-namespace:CalendarParse"
+    xmlns:pages="clr-namespace:CalendarParse.Pages"
     Title="CalendarParse">
 
-    <ShellContent
-        Title="Home"
-        ContentTemplate="{DataTemplate local:MainPage}"
-        Route="MainPage" />
+    <TabBar>
+        <Tab Title="Schedule">
+            <ShellContent
+                Title="Schedule"
+                ContentTemplate="{DataTemplate local:MainPage}"
+                Route="MainPage" />
+        </Tab>
+
+        <Tab Title="Monitor">
+            <ShellContent
+                Title="Monitor"
+                ContentTemplate="{DataTemplate pages:MonitorSetupPage}"
+                Route="MonitorSetupPage" />
+        </Tab>
+
+        <Tab Title="History">
+            <ShellContent
+                Title="History"
+                ContentTemplate="{DataTemplate pages:HistoryPage}"
+                Route="HistoryPage" />
+        </Tab>
+
+        <Tab Title="Settings">
+            <ShellContent
+                Title="Settings"
+                ContentTemplate="{DataTemplate pages:SettingsPage}"
+                Route="SettingsPage" />
+        </Tab>
+    </TabBar>
 
 </Shell>

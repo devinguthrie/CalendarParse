@@ -38,6 +38,8 @@ x86/
 Thumbs.db
 .DS_Store
 
+
+
 # NuGet user configuration
 .nuget/NuGet.config
 
@@ -93,4 +95,11 @@ calander-parse-test-imgs/
 # gstack security reports and session data (local only)
 .gstack/
 
+.github/
 .claude/settings.local.json
+
+.tools/
+
+# Ignore test harness images
+CalendarParse/Resources/Raw/harness*.jpg
+BenchmarkResults/device-captures/*

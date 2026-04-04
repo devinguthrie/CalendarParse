@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage
+    x:Class="CalendarParse.Pages.HistoryPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:models="clr-namespace:CalendarParse.Models;assembly=CalendarParse.Core"
+    Title="History">
+
+    <RefreshView x:Name="RefreshContainer"
+                 Refreshing="OnRefreshing">
+        <Grid Padding="16"
+              RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto">
+
+                <!-- ── Processing ────────────────────────────────────── -->
+                <Label Text="Processing"
+                      Grid.Row="0"
+                       FontAttributes="Bold"
+                       FontSize="16"
+                       Margin="0,0,0,8" />
+
+                <CollectionView x:Name="ProcessingList"
+                            Grid.Row="1"
+                                SelectionMode="None">
+                    <CollectionView.EmptyView>
+                        <Label Text="No schedules processing"
+                               TextColor="{StaticResource Gray500}"
+                               FontSize="13"
+                               Margin="0,0,0,16" />
+                    </CollectionView.EmptyView>
+                    <CollectionView.ItemTemplate>
+                        <DataTemplate x:DataType="models:ScheduleRunSummary">
+                                <Border Padding="14,10"
+                                    Margin="0,0,0,8"
+                                    Background="{AppThemeBinding Light=#E3F2FD, Dark=#1A2A3A}"
+                                    StrokeThickness="0"
+                                    StrokeShape="RoundRectangle 10">
+                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+
+                                    <!-- Spinner (processing) or error icon -->
+                                    <ActivityIndicator Grid.Column="0"
+                                                       IsRunning="{Binding IsProcessing}"
+                                                       IsVisible="{Binding IsProcessing}"
+                                                       WidthRequest="20" HeightRequest="20"
+                                                       VerticalOptions="Center" />
+                                    <Label Grid.Column="0"
+                                           Text="⚠"
+                                           FontSize="18"
+                                           IsVisible="{Binding IsError}"
+                                           TextColor="OrangeRed"
+                                           VerticalOptions="Center" />
+
+                                    <VerticalStackLayout Grid.Column="1" Spacing="2" VerticalOptions="Center">
+                                        <Label Text="{Binding DateText}"
+                                               FontAttributes="Bold"
+                                               FontSize="14" />
+                                        <Label Text="{Binding ProgressText}"
+                                               TextColor="{StaticResource Gray500}"
+                                               FontSize="12" />
+                                    </VerticalStackLayout>
+
+                                    <!-- Retry button on error -->
+                                    <Button Grid.Column="2"
+                                            Text="Retry"
+                                            IsVisible="{Binding IsError}"
+                                            CommandParameter="{Binding Id}"
+                                            Clicked="OnRetryProcessingTapped"
+                                            FontSize="12"
+                                            HeightRequest="34"
+                                            Padding="12,0"
+                                            Background="{StaticResource Primary}" />
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </CollectionView.ItemTemplate>
+                </CollectionView>
+
+                <!-- ── Correction In Progress ─────────────────────── -->
+                <Label Text="Correction In Progress"
+                      Grid.Row="2"
+                       FontAttributes="Bold"
+                       FontSize="16"
+                       Margin="0,16,0,8" />
+
+                <CollectionView x:Name="CorrectionList"
+                            Grid.Row="3"
+                                SelectionMode="None">
+                    <CollectionView.EmptyView>
+                        <Label Text="No sessions in progress"
+                               TextColor="{StaticResource Gray500}"
+                               FontSize="13"
+                               Margin="0,0,0,16" />
+                    </CollectionView.EmptyView>
+                    <CollectionView.ItemTemplate>
+                        <DataTemplate x:DataType="models:ScheduleRunSummary">
+                            <Border Padding="14,10"
+                                    Margin="0,0,0,8"
+                                    Background="{AppThemeBinding Light=#FFF8E1, Dark=#2C2510}"
+                                    StrokeThickness="0"
+                                    StrokeShape="RoundRectangle 10">
+                                <Border.GestureRecognizers>
+                                    <TapGestureRecognizer
+                                        CommandParameter="{Binding Id}"
+                                        Tapped="OnCorrectionTapped" />
+                                </Border.GestureRecognizers>
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <VerticalStackLayout Grid.Column="0" Spacing="2">
+                                        <Label Text="{Binding DateText}"
+                                               FontAttributes="Bold"
+                                               FontSize="14" />
+                                        <Label Text="{Binding ProgressText}"
+                                               TextColor="{StaticResource Gray500}"
+                                               FontSize="12" />
+                                        <Label Text="{Binding WeekLabel}"
+                                               TextColor="{StaticResource Gray500}"
+                                               FontSize="12"
+                                               IsVisible="{Binding HasWeekLabel}" />
+                                    </VerticalStackLayout>
+                                    <Label Grid.Column="1"
+                                           Text="Resume ›"
+                                           TextColor="{StaticResource Primary}"
+                                           FontSize="13"
+                                           VerticalOptions="Center" />
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </CollectionView.ItemTemplate>
+                </CollectionView>
+
+                <!-- ── Completed ──────────────────────────────────────── -->
+                <Label Text="Completed"
+                      Grid.Row="4"
+                       FontAttributes="Bold"
+                       FontSize="16"
+                       Margin="0,16,0,8" />
+
+                <CollectionView x:Name="CompletedList"
+                            Grid.Row="5"
+                                SelectionMode="None">
+                    <CollectionView.EmptyView>
+                        <Label Text="No completed schedules yet"
+                               TextColor="{StaticResource Gray500}"
+                               FontSize="13" />
+                    </CollectionView.EmptyView>
+                    <CollectionView.ItemTemplate>
+                        <DataTemplate x:DataType="models:ScheduleRunSummary">
+                                <Border Padding="14,10"
+                                    Margin="0,0,0,8"
+                                    Background="{AppThemeBinding Light=#F0FFF4, Dark=#0F2018}"
+                                    StrokeThickness="0"
+                                    StrokeShape="RoundRectangle 10">
+                                <VerticalStackLayout Spacing="2">
+                                    <Label Text="{Binding DateText}"
+                                           FontAttributes="Bold"
+                                           FontSize="14" />
+                                    <Label Text="{Binding ProgressText}"
+                                           TextColor="{StaticResource Gray500}"
+                                           FontSize="12" />
+                                    <Label Text="{Binding WeekLabel}"
+                                           TextColor="{StaticResource Gray500}"
+                                           FontSize="12"
+                                           IsVisible="{Binding HasWeekLabel}" />
+                                </VerticalStackLayout>
+                            </Border>
+                        </DataTemplate>
+                    </CollectionView.ItemTemplate>
+                </CollectionView>
+        </Grid>
+    </RefreshView>
+
+</ContentPage>

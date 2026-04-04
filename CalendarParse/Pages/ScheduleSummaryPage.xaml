@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage
+    x:Class="CalendarParse.Pages.ScheduleSummaryPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    Title="Schedule Summary">
+
+    <Grid Padding="20"
+          RowDefinitions="Auto,Auto,Auto,*,Auto"
+          RowSpacing="16">
+
+        <!-- Summary card -->
+        <Border Grid.Row="0"
+                Padding="16"
+                Background="{AppThemeBinding Light=#F0F4FF, Dark=#1A1F3C}"
+                StrokeThickness="0"
+                StrokeShape="RoundRectangle 12">
+            <VerticalStackLayout Spacing="6">
+                <Label x:Name="TotalHoursLabel"
+                       FontSize="28" FontAttributes="Bold"
+                       HorizontalOptions="Center" />
+                <Label x:Name="WeekDiffLabel"
+                       FontSize="13"
+                       TextColor="{StaticResource Gray500}"
+                       HorizontalOptions="Center" />
+                <Label x:Name="ShiftCountLabel"
+                       FontSize="13"
+                       TextColor="{StaticResource Gray500}"
+                       HorizontalOptions="Center" />
+            </VerticalStackLayout>
+        </Border>
+
+        <!-- Conflict warnings -->
+        <Grid x:Name="ConflictsPanel"
+              Grid.Row="1"
+              IsVisible="False"
+              RowDefinitions="Auto,*"
+              RowSpacing="6">
+            <Label Grid.Row="0" Text="⚠ Calendar Conflicts" FontAttributes="Bold" TextColor="Orange" />
+            <CollectionView Grid.Row="1" x:Name="ConflictsList">
+                <CollectionView.ItemTemplate>
+                    <DataTemplate>
+                        <Label Text="{Binding .}"
+                               FontSize="13"
+                               TextColor="Orange"
+                               Padding="0,2" />
+                    </DataTemplate>
+                </CollectionView.ItemTemplate>
+            </CollectionView>
+        </Grid>
+
+        <!-- Shift list -->
+        <Label Grid.Row="2" Text="Your Shifts" FontAttributes="Bold" FontSize="16" />
+        <CollectionView Grid.Row="3" x:Name="ShiftsList">
+            <CollectionView.ItemTemplate>
+                <DataTemplate x:DataType="x:String">
+                    <Grid ColumnDefinitions="*,Auto" Padding="0,6">
+                        <Label Grid.Column="0"
+                               Text="{Binding .}"
+                               VerticalOptions="Center" />
+                        <Button Grid.Column="1"
+                                Text="Copy"
+                                FontSize="12"
+                                Padding="8,4"
+                                CommandParameter="{Binding .}"
+                                Clicked="OnCopyShiftClicked"
+                                Background="Transparent"
+                                TextColor="{StaticResource Primary}" />
+                    </Grid>
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+
+        <!-- Action buttons -->
+        <VerticalStackLayout Grid.Row="4" Spacing="8">
+            <Button x:Name="AddToCalendarBtn"
+                    Text="Add to My Calendar"
+                    Clicked="OnAddToCalendarClicked" />
+
+            <Button Text="Share My Calendar (.ics)"
+                    Clicked="OnShareIcsClicked"
+                    Background="Transparent"
+                    TextColor="{StaticResource Primary}" />
+        </VerticalStackLayout>
+
+    </Grid>
+</ContentPage>

@@ -84,6 +84,13 @@ public sealed class HybridCalendarService : ICalendarParseService
     private readonly WindowsWinRtOcrService _winRtOcr;
     private readonly List<string> _sessionNames = new();
 
+    /// <summary>
+    /// Cell pixel positions from the most recent <see cref="ProcessAsync"/> call.
+    /// Populated only when running as <see cref="HybridCalendarService"/> directly
+    /// (not through the <see cref="ICalendarParseService"/> interface).
+    /// </summary>
+    public CellPositions? LastRunPositions { get; private set; }
+
     public HybridCalendarService(
         string baseUrl = OllamaCalendarService.DefaultBaseUrl,
         string model   = OllamaCalendarService.DefaultModel,
@@ -372,8 +379,9 @@ public sealed class HybridCalendarService : ICalendarParseService
         // Pass 2's LLM may return names in KnownNames order rather than the
         // visual top-to-bottom order in the image. Use OCR token Y-positions
         // from the name column to re-sort, fixing row-assignment errors.
+        // nameToY is declared at this scope so BuildCellPositionsAsync can use it below.
+        Dictionary<string, int> nameToY = new(StringComparer.OrdinalIgnoreCase);
         {
-            var nameToY = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             foreach (string name in names)
             {
                 // Use 3-char prefix to tolerate OCR noise ("Megan" → "Meg")
@@ -737,6 +745,11 @@ public sealed class HybridCalendarService : ICalendarParseService
         foreach (string name in names)
             employees.Add(new { Name = name, Shifts = shiftMap.GetValueOrDefault(name, new()) });
 
+        // ── Compute cell positions for overlay rendering ───────────────────────
+        LastRunPositions = await BuildCellPositionsAsync(
+            rawBytes, dayColBounds, gridReliable, nameToY, names,
+            imageWidth, imageHeight, ct);
+
         var result = new { Month = month, Year = year, Employees = employees };
         return JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
     }
@@ -827,6 +840,148 @@ public sealed class HybridCalendarService : ICalendarParseService
         }
 
         return result;
+    }
+
+    // ── Cell position builder ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Assembles a <see cref="CellPositions"/> snapshot from the data computed during
+    /// <see cref="ProcessAsync"/>. When OCR-based column detection failed
+    /// (<paramref name="gridReliable"/>=false), falls back to the OpenCV grid detector
+    /// to derive column X-bounds from the header row. Missing employee Y-positions are
+    /// interpolated linearly from their nearest OCR-anchored neighbors.
+    /// </summary>
+    private async Task<CellPositions> BuildCellPositionsAsync(
+        byte[] rawBytes,
+        Dictionary<int, (int XStart, int XEnd)> dayColBounds,
+        bool gridReliable,
+        Dictionary<string, int> nameToY,
+        List<string> names,
+        int imageWidth,
+        int imageHeight,
+        CancellationToken ct)
+    {
+        // ── Column bounds ─────────────────────────────────────────────────────
+        var columns = new Dictionary<int, ColBounds>();
+        bool columnsFromOcr = gridReliable;
+
+        if (gridReliable)
+        {
+            foreach (var (dayIdx, (xStart, xEnd)) in dayColBounds)
+                columns[dayIdx] = new ColBounds
+                {
+                    EstimatedCellXStart = xStart,
+                    EstimatedCellXEnd   = xEnd,
+                };
+        }
+        else
+        {
+            // Fallback: OpenCV grid detection. The header row's cells (sorted left-to-right)
+            // give column X-bounds. Skip the first cell (name column); the remaining up to 7
+            // are the day columns, assumed to run Sun=0 … Sat=6 left-to-right.
+            var cells = await _tableDetector.DetectCellsAsync(rawBytes, ct);
+            var headerCells = cells
+                .Where(c => c.Row == 0)
+                .OrderBy(c => c.Col)
+                .ToList();
+            var dayCells = headerCells.Count > 1
+                ? headerCells.Skip(1).Take(7).ToList()
+                : new List<CalendarParse.Models.TableCell>();
+            for (int i = 0; i < dayCells.Count; i++)
+            {
+                var b = dayCells[i].Bounds;
+                columns[i] = new ColBounds
+                {
+                    EstimatedCellXStart = b.X,
+                    EstimatedCellXEnd   = b.X + b.Width,
+                };
+            }
+            Console.Error.WriteLine(
+                $"    [positions] gridReliable=false — TableDetector fallback: {columns.Count} columns from grid");
+        }
+
+        // ── Row Y-positions with linear interpolation for missing entries ─────
+        // nameToY stores the Y of the name-column OCR token (top of text, not center).
+        // EstimatedCellY = nameTokenY + NameCellOffsetPx  (shift-cell vertical center).
+        // CompareDisplayY = EstimatedCellY - estimatedRowH (≥1 rows above the cell).
+        const int NameCellOffset = 9;
+
+        // Derive row height from the actual spread of OCR-anchored name positions.
+        // imageHeight / employeeCount massively overestimates because the table only
+        // occupies a fraction of the image (background, wall, metrics rows below, etc.).
+        int estimatedRowH;
+        {
+            var anchoredYs = names
+                .Where(n => nameToY.ContainsKey(n))
+                .Select(n => nameToY[n])
+                .OrderBy(y => y)
+                .ToList();
+
+            if (anchoredYs.Count >= 2)
+            {
+                // Average pixel gap between consecutive OCR-hit rows.
+                int span = anchoredYs[^1] - anchoredYs[0];
+                estimatedRowH = Math.Max(1, span / (anchoredYs.Count - 1));
+            }
+            else
+            {
+                // Fallback when OCR found ≤1 name: use a conservative small value
+                // rather than the image-height formula.
+                estimatedRowH = Math.Max(10, imageHeight / Math.Max(1, names.Count * 4));
+            }
+        }
+        var rows = new Dictionary<string, EmployeeRow>(StringComparer.OrdinalIgnoreCase);
+
+        for (int i = 0; i < names.Count; i++)
+        {
+            string n = names[i];
+            int nameTokenY;
+
+            if (nameToY.TryGetValue(n, out int y))
+            {
+                nameTokenY = y;
+            }
+            else
+            {
+                // Interpolate from nearest OCR-anchored neighbors above and below.
+                double prevY = double.MinValue, nextY = double.MaxValue;
+                for (int j = i - 1; j >= 0; j--)
+                    if (nameToY.TryGetValue(names[j], out int py)) { prevY = py; break; }
+                for (int j = i + 1; j < names.Count; j++)
+                    if (nameToY.TryGetValue(names[j], out int ny)) { nextY = ny; break; }
+
+                nameTokenY = prevY == double.MinValue && nextY == double.MaxValue
+                    ? (i + 1) * estimatedRowH
+                    : prevY == double.MinValue
+                        ? (int)(nextY - estimatedRowH)
+                        : nextY == double.MaxValue
+                            ? (int)(prevY + estimatedRowH)
+                            : (int)((prevY + nextY) / 2.0);
+
+                Console.Error.WriteLine($"    [positions] row[{n}] nameTokenY={nameTokenY} interpolated (no OCR hit)");
+            }
+
+            int estimatedCellY  = nameTokenY + NameCellOffset;
+            int compareDisplayY = Math.Max(0, estimatedCellY - estimatedRowH);
+
+            rows[n] = new EmployeeRow
+            {
+                EstimatedCellY  = estimatedCellY,
+                CompareDisplayY = compareDisplayY,
+            };
+        }
+
+        return new CellPositions
+        {
+            ImageWidth          = imageWidth,
+            ImageHeight         = imageHeight,
+            EstimatedRowHeightPx = estimatedRowH,
+            NameCellOffsetPx    = NameCellOffset,
+            Columns             = columns,
+            Rows                = rows,
+            Names               = names.ToList(),
+            ColumnsFromOcr      = columnsFromOcr,
+        };
     }
 
     /// <summary>
@@ -1387,6 +1542,81 @@ public sealed class HybridCalendarService : ICalendarParseService
         string v = TrailingHours.Replace(text.Trim(), "").Trim();
         if (Regex.IsMatch(v, @"^\d+\.?\d*$")) return "";
         return v;
+    }
+
+    /// <summary>
+    /// Full pipeline plus bounding-box positions for overlay rendering.
+    /// Calls <see cref="ProcessAsync"/> (which populates <see cref="LastRunPositions"/>),
+    /// then correlates each shift's date with the column/row pixel data to produce
+    /// <see cref="CalendarParse.Models.BoundingBox"/> values for the mobile overlay UI.
+    /// </summary>
+    public async Task<ProcessWithBoundsResult> ProcessWithBoundsAsync(
+        Stream imageStream, string nameFilter, CancellationToken ct = default)
+    {
+        string json;
+        try
+        {
+            json = await ProcessAsync(imageStream, nameFilter, ct);
+        }
+        catch (OperationCanceledException ex)
+        {
+            return new ProcessWithBoundsResult { Error = ex.Message };
+        }
+        catch (Exception ex)
+        {
+            return new ProcessWithBoundsResult { Error = ex.Message };
+        }
+
+        if (json.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase))
+            return new ProcessWithBoundsResult { Error = json["ERROR:".Length..].Trim() };
+
+        CalendarData? data;
+        try
+        {
+            data = System.Text.Json.JsonSerializer.Deserialize<CalendarData>(json,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch
+        {
+            // JSON parse failure — return raw JSON without bounds rather than failing entirely
+            return new ProcessWithBoundsResult { RawJson = json };
+        }
+
+        if (data is null)
+            return new ProcessWithBoundsResult { RawJson = json };
+
+        var positions = LastRunPositions;
+
+        // Convert CellPositions (CLI type) → CellPositionsSnapshot (Core type) so
+        // ShiftBoundsMapper.Map() can be reused here instead of duplicating the logic.
+        CellPositionsSnapshot? snapshot = null;
+        if (positions is not null)
+        {
+            snapshot = new CellPositionsSnapshot
+            {
+                EstimatedRowHeightPx = positions.EstimatedRowHeightPx,
+                Columns = positions.Columns.ToDictionary(
+                    kvp => kvp.Key,
+                    kvp => new ColSnapshot
+                    {
+                        XStart = kvp.Value.EstimatedCellXStart,
+                        XEnd   = kvp.Value.EstimatedCellXEnd,
+                    }),
+                Rows = positions.Rows.ToDictionary(
+                    kvp => kvp.Key,
+                    kvp => new RowSnapshot { CellCenterY = kvp.Value.EstimatedCellY }),
+            };
+        }
+
+        var shifts = CalendarParse.Services.ShiftBoundsMapper.Map(data, snapshot);
+
+        return new ProcessWithBoundsResult
+        {
+            RawJson     = json,
+            Shifts      = shifts,
+            ImageWidth  = positions?.ImageWidth  ?? 0,
+            ImageHeight = positions?.ImageHeight ?? 0,
+        };
     }
 
 }
