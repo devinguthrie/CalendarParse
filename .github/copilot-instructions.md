@@ -4,12 +4,12 @@
 
 After **every** completed experiment — meaning any benchmark run that produces a final score — you MUST update both doc files before ending the session or declaring the task done:
 
-1. **`.github/docs/experiment-log.md`** — add a row to the summary table and a narrative section under "Phase Details"
-2. **`.github/docs/next-session-plan.md`** — update the current state table (score + test set), add the session summary row, rewrite the remaining errors section, update hard ceiling analysis, and add any new anti-patterns
+1. **`.github/docs/experiment-log.md`** — add a narrative section under "Phase Details" with: what was tried, the score result, root cause analysis, and why it was committed or reverted.
+2. **`.github/docs/next-session-plan.md`** — update **in-place**: Current State table (score), Remaining Errors section, Hard Ceiling Analysis table, and Anti-Patterns table. **Do NOT add session summary sections** — next-session-plan.md is forward-looking only; history lives in experiment-log.md.
 
 **Do not wait until the user asks.** Treat doc updates as the final step of every experiment, the same as reverting bad code. If you're ending a session without having updated the docs, that is a bug.
 
-If an experiment is REVERTED, still document it — reverted experiments belong in the summary table with a "REVERTED" note and a brief narrative explaining why.
+If an experiment is REVERTED, still document it in experiment-log.md with a "REVERTED" note and brief narrative. Update next-session-plan.md only if the revert changed the score, remaining errors, or anti-patterns.
 
 ## Project Context
 
@@ -17,7 +17,7 @@ If an experiment is REVERTED, still document it — reverted experiments belong 
 - **Goal**: Extract employee shift schedules from phone photos of printed grid calendars
 - **Pipeline**: `HybridCalendarService.cs` — OCR → LLM names → per-day strip LLM → x-marks → OCR name supplement → holiday heuristic
 - **Model**: `qwen2.5vl:7b` via Ollama, `temperature=0.0` (deterministic)
-- **Test set**: 5 images, 434 shifts total. Current best: **377/434 (86.9%)**
+- **Test set**: 5 images, 434 shifts total. Current best: **394/434 (90.8%)**
 - **Experiment log**: `.github/docs/experiment-log.md`
 - **Next session plan**: `.github/docs/next-session-plan.md`
 

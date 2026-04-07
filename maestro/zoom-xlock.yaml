@@ -1,0 +1,112 @@
+# Zoom X-lock integration test
+# Verifies that the image-pixel column under the position marker does not drift
+# when the user drags the zoom slider.
+#
+# Prerequisites:
+#   - DEBUG build installed on device (OverlayHarnessBtn is only visible in DEBUG)
+#   - Maestro installed: https://maestro.mobile.dev/getting-started/installing-maestro
+#
+# Run:
+#   maestro test maestro/zoom-xlock.yaml
+#
+# App flow (after investigation 2026-04-04):
+#   ConfirmTime() in BubbleState calls PositionState=Editing when PositionState==Pending,
+#   so confirming time immediately launches EnterLocationEditMode() — no intermediate
+#   "Edit Position" step exists. The test goes straight from "Confirm Time" tap to the
+#   ZoomSlider / Save-Position UI.
+
+appId: com.companyname.calendarparse
+---
+# ── 1. Launch the app (force-stop first so we always start from home screen) ──
+- stopApp
+- launchApp
+
+# ── 2. Open the debug harness (seeds 7 shifts + test image) ──────────────────
+- tapOn:
+    id: OverlayHarnessBtn
+
+# ── 3. Wait for ConfirmationPage to load and auto-select bubble ──────────────
+# ConfirmActionBtn (AutomationId=ConfirmActionBtn, shows "👍 Confirm Time") is
+# always visible when a bubble is selected.
+- extendedWaitUntil:
+    visible:
+      id: ConfirmActionBtn
+    timeout: 8000
+
+# ── 4. Confirm time — ConfirmTime() auto-enters position edit mode ──────────
+# BubbleState.ConfirmTime() transitions PositionState: Pending → Editing,
+# OnBubbleTapped calls EnterLocationEditMode(), NormalActions hides,
+# PositionEditActions (SavePositionBtn / CancelPositionBtn) + ZoomSlider appear.
+- tapOn:
+    id: ConfirmActionBtn
+
+# ── 5. Wait for edit mode to settle (PositionDebugLabel appears) ─────────────
+# ConfirmTime() + OnBubbleTapped + EnterLocationEditMode() fire synchronously,
+# but MAUI layout passes are async. Give the UI thread time to render.
+# PositionDebugLabel has resource-id; use id: selector — more reliable than
+# text: substring match on a multi-line label.
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible:
+      id: PositionDebugLabel
+    timeout: 8000
+
+# ── 6. Assert debug label is visible ─────────────────────────────────────────
+- assertVisible:
+    id: PositionDebugLabel
+
+# ── 7. Screenshot baseline ───────────────────────────────────────────────────
+- takeScreenshot: zoom-xlock-01-before
+
+# ── 8. Capture cx BEFORE zoom ────────────────────────────────────────────────
+# Read full text of PositionDebugLabel by resource-id; regex cx=(\d+) in JS.
+- copyTextFrom:
+    id: PositionDebugLabel
+- runScript: scripts/capture-cx-before.js
+
+# ── 9. Zoom in: swipe DOWN on the vertical slider ────────────────────────────
+# ZoomSlider has Rotation="-90" so:
+#   visual TOP  = slider MIN (1.0)
+#   visual BOTTOM = slider MAX (4.0)
+# Swiping DOWN drags the thumb toward MAX (zooms in).
+- swipe:
+    direction: DOWN
+    element:
+      id: ZoomSlider
+    duration: 900
+
+# ── 10. Wait for layout + scroll to settle ───────────────────────────────────
+- waitForAnimationToEnd
+
+# ── 11. Zoom in a second time (ensures multiple layout passes) ────────────────
+- swipe:
+    direction: DOWN
+    element:
+      id: ZoomSlider
+    duration: 900
+
+# ── 12. Wait for x-lock scroll to settle after second zoom ───────────────────
+- waitForAnimationToEnd
+
+# ── 13. Screenshot + capture cx AFTER zoom ────────────────────────────────────
+- takeScreenshot: zoom-xlock-02-after
+- copyTextFrom:
+    id: PositionDebugLabel
+- runScript: scripts/assert-cx-after.js
+
+# ── 14. Zoom OUT: verify lock holds in reverse ────────────────────────────────
+- copyTextFrom:
+    id: PositionDebugLabel
+- runScript: scripts/capture-cx-mid.js
+
+- swipe:
+    direction: UP
+    element:
+      id: ZoomSlider
+    duration: 900
+
+- takeScreenshot: zoom-xlock-03-zoom-out
+
+- copyTextFrom:
+    id: PositionDebugLabel
+- runScript: scripts/assert-cx-zoomout.js

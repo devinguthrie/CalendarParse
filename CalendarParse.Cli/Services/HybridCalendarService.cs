@@ -9,6 +9,13 @@ using Emgu.CV.Util;
 
 namespace CalendarParse.Cli.Services;
 
+/// <summary>Timing and shift-state snapshot captured at a named pipeline step boundary.</summary>
+public record StepSnapshot(
+    string   StepName,
+    TimeSpan StepElapsed,
+    TimeSpan TotalElapsed,
+    string   JsonSnapshot);
+
 /// <summary>
 /// Hybrid ICalendarParseService that eliminates WRONG-COL by construction.
 /// <para>
@@ -83,20 +90,33 @@ public sealed class HybridCalendarService : ICalendarParseService
     private readonly WindowsTableDetector _tableDetector;
     private readonly WindowsWinRtOcrService _winRtOcr;
     private readonly List<string> _sessionNames = new();
+    private int _llmCalls;
+    private int _retryCount;
 
     /// <summary>
     /// Cell pixel positions from the most recent <see cref="ProcessAsync"/> call.
     /// Populated only when running as <see cref="HybridCalendarService"/> directly
     /// (not through the <see cref="ICalendarParseService"/> interface).
     /// </summary>
-    public CellPositions? LastRunPositions { get; private set; }
+    public CellPositions?       LastRunPositions { get; private set; }
+
+    /// <summary>Per-step timing and shift snapshots from the most recent <see cref="ProcessAsync"/> call.
+    /// Populated only for <see cref="HybridCalendarService"/> (not GLM-OCR or Vision modes).</summary>
+    public List<StepSnapshot>    LastRunSteps         { get; private set; } = [];
+    public List<(string DayName, int CellsAdded)> LastRunDayBreakdown { get; private set; } = [];
+    public int LastRunLlmCalls     { get; private set; }
+    public int LastRunRetries      { get; private set; }
+    public int LastRunOcrFilled    { get; private set; }
+    public int LastRunTotalCells   { get; private set; }
+    public int LastRunHolidayFires { get; private set; }
 
     public HybridCalendarService(
         string baseUrl = OllamaCalendarService.DefaultBaseUrl,
         string model   = OllamaCalendarService.DefaultModel,
-        IEnumerable<string>? knownNames = null)
+        IEnumerable<string>? knownNames = null,
+        OllamaCalendarService? llmBackend = null)
     {
-        _ollama      = new OllamaCalendarService(baseUrl, model, knownNames);
+        _ollama      = llmBackend ?? new OllamaCalendarService(baseUrl, model, knownNames);
         _preprocessor = new WindowsImagePreprocessor();
         _tableDetector = new WindowsTableDetector();
         _winRtOcr    = new WindowsWinRtOcrService();
@@ -122,9 +142,28 @@ public sealed class HybridCalendarService : ICalendarParseService
         string base64   = Convert.ToBase64String(rawBytes);
 
         var sw = Stopwatch.StartNew();
-        string T() => $"+{sw.Elapsed.TotalSeconds:F0}s";
+        TimeSpan _tPrev    = TimeSpan.Zero;   // advances every T() call (real-time output)
+        TimeSpan _snapPrev = TimeSpan.Zero;   // advances only on Snap() calls (step table)
+        var _snapSteps = new List<StepSnapshot>();
+        LastRunSteps = _snapSteps;
+        _llmCalls   = 0;
+        _retryCount = 0;
+        var _dayBreakdowns = new List<(string DayName, int CellsAdded)>();
+        LastRunDayBreakdown = _dayBreakdowns;
+
+        static string FmtMmSs(TimeSpan t) => $"{(int)t.TotalMinutes}:{t.Seconds:D2}";
+
+        // Returns "[M:SS | +Xs step]" for inline Console.Error output; advances _tPrev.
+        string T()
+        {
+            var total = sw.Elapsed;
+            var delta = total - _tPrev;
+            _tPrev    = total;
+            return $"{FmtMmSs(total)} | +{delta.TotalSeconds:F0}s";
+        }
 
         // ── Pass 1: header (LLM on full image) ───────────────────────────────
+        _llmCalls++;
         var (month, year, dates) = await _ollama.ExtractHeaderAsync(base64, ct);
         Console.Error.WriteLine(
             $"    [{T()}] pass 1/4: header ({month} {year}, {dates.Count} dates)");
@@ -268,6 +307,7 @@ public sealed class HybridCalendarService : ICalendarParseService
         }
 
         // ── Pass 2: employee names (LLM on full image) ────────────────────────
+        _llmCalls++;
         // Feed OCR name-column fragments + session names so the LLM has grounding
         // context for reconstructing truncated or partially-visible names.
         var sessionHints = _sessionNames.Count > 0 && _ollama._knownNames.Count == 0
@@ -357,6 +397,20 @@ public sealed class HybridCalendarService : ICalendarParseService
             shiftMap[name] = shifts;
         }
 
+        // Records a named step snapshot of the current shiftMap state; advances _snapPrev.
+        // All captured variables (month, year, names, shiftMap) are assigned by this point.
+        void Snap(string label)
+        {
+            var total = sw.Elapsed;
+            var step  = total - _snapPrev;
+            _snapPrev = total;
+            var empList = names.Select(n =>
+                new { Name = n, Shifts = shiftMap.GetValueOrDefault(n, new List<object>()) });
+            string json = JsonSerializer.Serialize(
+                new { Month = month, Year = year, Employees = empList });
+            _snapSteps.Add(new StepSnapshot(label, step, total, json));
+        }
+
         // ── Apply OCR pre-fills ───────────────────────────────────────────────
         int ocrFilled = 0;
         for (int dayIdx = 0; dayIdx < 7; dayIdx++)
@@ -374,6 +428,7 @@ public sealed class HybridCalendarService : ICalendarParseService
         }
         if (ocrFilled > 0)
             Console.Error.WriteLine($"    [{T()}] ocr pre-fill: {ocrFilled} time-range cells filled directly");
+        Snap("names + OCR fill");
 
         // ── Reorder names by OCR Y-position to match visual row order ─────────
         // Pass 2's LLM may return names in KnownNames order rather than the
@@ -455,6 +510,7 @@ public sealed class HybridCalendarService : ICalendarParseService
         var holidayBlankedDayIndices = new HashSet<int>();
         for (int dayIdx = 0; dayIdx < 7; dayIdx++)
         {
+            int dayFillBefore = shiftMap.Values.Sum(s => s.Count(c => !string.IsNullOrEmpty(((dynamic)c).Shift)));
             // Check how many employees still need LLM for this column
             var needsLlm = Enumerable.Range(0, names.Count)
                 .Where(empIdx =>
@@ -472,6 +528,7 @@ public sealed class HybridCalendarService : ICalendarParseService
             {
                 Console.Error.WriteLine(
                     $"    [{T()}] pass 3/4: day {dayIdx} ({dayNamesArr[dayIdx]}): all filled by OCR");
+                _dayBreakdowns.Add((dayNamesArr[dayIdx], 0));
                 continue;
             }
 
@@ -604,6 +661,8 @@ public sealed class HybridCalendarService : ICalendarParseService
             Console.Error.WriteLine(
                 $"    [{T()}] pass 3/4: day {dayIdx} ({dayNamesArr[dayIdx]}) " +
                 $"- {(usingStrip ? "strip" : "full-img")} LLM");
+            int dayFillAfter = shiftMap.Values.Sum(s => s.Count(c => !string.IsNullOrEmpty(((dynamic)c).Shift)));
+            _dayBreakdowns.Add((dayNamesArr[dayIdx], dayFillAfter - dayFillBefore));
         }
 
         // ── OCR garbage sanitization ──────────────────────────────────────────
@@ -618,8 +677,10 @@ public sealed class HybridCalendarService : ICalendarParseService
                     shifts[idx] = new { Date = (string)cell.Date, Shift = "" };
             }
         }
+        Snap("per-day strip LLM");
 
         // ── Pass 4: X-marks clarification (LLM on full image) ────────────────
+        _llmCalls++;
         var xMarks = await _ollama.ExtractXMarksAsync(base64, names, ct);
         Console.Error.WriteLine($"    [{T()}] pass 4/4: x-marks done");
 
@@ -647,6 +708,7 @@ public sealed class HybridCalendarService : ICalendarParseService
             }
             shiftMap[name] = shifts;
         }
+        Snap("x-mark detection");
 
         // ── OCR name supplementation + targeted LLM shift extraction ─────────
         // Find employee names missed by LLM in pass 2 using OCR name column tokens,
@@ -739,6 +801,14 @@ public sealed class HybridCalendarService : ICalendarParseService
                 shiftMap[matchedKnown] = suppShifts;
             }
         }
+
+        Snap("OCR name supplement");
+
+        LastRunOcrFilled    = ocrFilled;
+        LastRunTotalCells   = shiftMap.Values.Sum(s => s.Count(c => !string.IsNullOrEmpty(((dynamic)c).Shift)));
+        LastRunHolidayFires = holidayBlankedDayIndices.Count;
+        LastRunLlmCalls     = _llmCalls;
+        LastRunRetries      = _retryCount;
 
         // ── Assemble JSON ─────────────────────────────────────────────────────
         var employees = new List<object>();
@@ -1075,6 +1145,7 @@ public sealed class HybridCalendarService : ICalendarParseService
             });
         }
 
+        _llmCalls++;
         string raw = await _ollama.CallOllamaAsync(base64Image, prompt, ct, numPredict: predictBudget);
 
         var result = new List<string>();
@@ -1114,6 +1185,7 @@ public sealed class HybridCalendarService : ICalendarParseService
         {
             Console.Error.WriteLine(
                 $"    hours-contamination detected ({rawNumericCount}/{result.Count} numeric) — re-query narrow strip");
+            _retryCount++;
             result = await ExtractColumnFromImageAsync(
                 narrowBase64, dayName, isoDate, names, stripMode, ct, narrowBase64: null);
         }
@@ -1136,6 +1208,7 @@ public sealed class HybridCalendarService : ICalendarParseService
             if (eightCount >= 2)
             {
                 Console.Error.WriteLine($"    8:xx start-time contamination ({eightCount}/{result.Count}) — re-query narrow strip");
+                _retryCount++;
                 result = await ExtractColumnFromImageAsync(
                     narrowBase64, dayName, isoDate, names, stripMode, ct, narrowBase64: null);
                 // Strip leading header from the narrow result as well.
@@ -1178,6 +1251,8 @@ public sealed class HybridCalendarService : ICalendarParseService
                         ["nameList"]     = nameListR,
                         ["lastEmployee"] = lastEmpR
                     });
+                    _retryCount++;
+                    _llmCalls++;
                     string retryRaw2 = await _ollama.CallOllamaAsync(narrowBase64, reinforcedPrompt, ct, numPredict: predictBudget);
                     var retryResult = new List<string>();
                     try

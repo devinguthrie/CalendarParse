@@ -94,10 +94,13 @@
                         AutomationId="ImageScrollView"
                         Scrolled="OnImageScrollViewScrolled"
                         Orientation="Both">
-                <ScrollView.GestureRecognizers>
-                    <PinchGestureRecognizer PinchUpdated="OnImagePinched" />
-                </ScrollView.GestureRecognizers>
                 <Grid x:Name="ImageContainer">
+                    <Grid.GestureRecognizers>
+                        <!-- Pinch on inner Grid — ScrollView on Android intercepts multi-touch
+                             before passing to its own recognizers, so keep pinch here instead. -->
+                        <PinchGestureRecognizer PinchUpdated="OnImagePinched" />
+                        <TapGestureRecognizer Tapped="OnImageContainerTapped" />
+                    </Grid.GestureRecognizers>
                     <Image x:Name="ScheduleImage"
                            Aspect="AspectFit"
                            HorizontalOptions="Fill"
@@ -110,9 +113,6 @@
                                   VerticalOptions="Fill"
                                   InputTransparent="True" />
 
-                    <Grid.GestureRecognizers>
-                        <TapGestureRecognizer Tapped="OnImageContainerTapped" />
-                    </Grid.GestureRecognizers>
                 </Grid>
             </ScrollView>
 
@@ -197,6 +197,39 @@
                 </BoxView>
             </AbsoluteLayout>
 
+            <!-- Fixed position target marker + label — user scrolls the image under this to set location.
+                 Wrapped in a centered VerticalStackLayout so the time label sits directly above the rect.
+                 InputTransparent is NOT set here so PositionDebugLabel remains accessible to tooling. -->
+            <VerticalStackLayout HorizontalOptions="Center"
+                                 VerticalOptions="Center"
+                                 Spacing="0">
+                <Label x:Name="PositionTargetLabel"
+                       IsVisible="False"
+                       HorizontalOptions="Center"
+                       HorizontalTextAlignment="Center"
+                       TextColor="White"
+                       FontSize="12"
+                       Padding="6,2"
+                       BackgroundColor="#CC000000" />
+                <Border x:Name="PositionTargetRect"
+                        IsVisible="False"
+                        WidthRequest="200"
+                        HeightRequest="55"
+                        Stroke="Gold"
+                        StrokeThickness="3"
+                        InputTransparent="True"
+                        Background="Transparent" />
+                <Label x:Name="PositionDebugLabel"
+                       AutomationId="PositionDebugLabel"
+                       IsVisible="False"
+                       HorizontalOptions="Center"
+                       HorizontalTextAlignment="Center"
+                       TextColor="Yellow"
+                       FontSize="11"
+                       Padding="6,2"
+                       BackgroundColor="#CC000000" />
+            </VerticalStackLayout>
+
             <!-- Bubble detail panel — shown when a bubble is tapped -->
                 <Border x:Name="BubbleDetailPanel"
                     IsVisible="False"
@@ -222,7 +255,8 @@
                            Keyboard="Text"
                            IsVisible="False" />
 
-                    <HorizontalStackLayout Spacing="12" HorizontalOptions="Center">
+                    <HorizontalStackLayout x:Name="NormalActions"
+                                           Spacing="12" HorizontalOptions="Center">
                         <Button x:Name="ThumbsUpBtn"
                             AutomationId="ConfirmActionBtn"
                                 Text="👍 Confirm"
@@ -238,6 +272,21 @@
                                 Text="📍 Edit Position"
                                 Clicked="OnEditPositionClicked"
                                 IsVisible="False"
+                                Background="{StaticResource Gray300}" />
+                    </HorizontalStackLayout>
+
+                    <!-- Shown only during Edit Position mode -->
+                    <HorizontalStackLayout x:Name="PositionEditActions"
+                                           Spacing="12"
+                                           HorizontalOptions="Center"
+                                           IsVisible="False">
+                        <Button Text="✅ Save Position"
+                                AutomationId="SavePositionBtn"
+                                Clicked="OnPositionSaveClicked"
+                                Background="{StaticResource Primary}" />
+                        <Button Text="✗ Cancel"
+                                AutomationId="CancelPositionBtn"
+                                Clicked="OnPositionCancelClicked"
                                 Background="{StaticResource Gray300}" />
                     </HorizontalStackLayout>
 
@@ -259,18 +308,24 @@
         </Grid>
 
         <!-- ── Right-side zoom controls (outside image scroll area) ─────────── -->
-        <VerticalStackLayout x:Name="ZoomControlsPanel"
-                             Grid.Row="1"
-                             HorizontalOptions="End"
-                             VerticalOptions="Center"
-                             Margin="0,0,4,0"
-                             Spacing="4"
-                             IsVisible="False"
-                             Padding="4,8"
-                             Background="{AppThemeBinding Light=#E8FFFFFF, Dark=#E8333333}">
-            <!-- Wrapper gives layout the correct visual footprint for the rotated slider -->
-            <Grid WidthRequest="44" HeightRequest="180">
+        <!-- Grid fills the full image-row height; * row for slider, Auto for button -->
+        <Grid x:Name="ZoomControlsPanel"
+              Grid.Row="1"
+              WidthRequest="52"
+              HorizontalOptions="End"
+              VerticalOptions="Fill"
+              Padding="5,40,5,100"
+              IsVisible="False"
+              RowDefinitions="*,Auto">
+            <!-- Wrapper fills the * row; background lives here so hiding it removes the grey panel -->
+            <Grid x:Name="ZoomSliderWrapper"
+                  Grid.Row="0"
+                  WidthRequest="44"
+                  HorizontalOptions="Center"
+                  VerticalOptions="Fill"
+                  Background="{AppThemeBinding Light=#E8FFFFFF, Dark=#E8333333}">
                 <Slider x:Name="ZoomSlider"
+                        AutomationId="ZoomSlider"
                         Minimum="1"
                         Maximum="4"
                         Value="1"
@@ -279,17 +334,22 @@
                         HeightRequest="44"
                         HorizontalOptions="Center"
                         VerticalOptions="Center"
-                        ValueChanged="OnZoomSliderValueChanged" />
+                        ValueChanged="OnZoomSliderValueChanged"
+                        DragStarted="OnZoomDragStarted"
+                        DragCompleted="OnZoomDragCompleted" />
             </Grid>
-            <Button x:Name="ZoomLockBtn"
-                    AutomationId="ZoomLockBtn"
-                    Text="🔓"
+            <!-- Hide/Show toggle — hides + disables the slider when active -->
+            <Button x:Name="ZoomHideBtn"
+                    AutomationId="ZoomHideBtn"
+                    Grid.Row="1"
+                    Text="🙈"
                     WidthRequest="44"
                     HeightRequest="44"
                     HorizontalOptions="Center"
-                    Clicked="OnLockZoomClicked"
+                    Padding="0"
+                    Clicked="OnZoomHideClicked"
                     Background="{StaticResource Gray300}" />
-        </VerticalStackLayout>
+        </Grid>
 
         <!-- ── Submitted state ─────────────────────────────────────────────────── -->
         <VerticalStackLayout x:Name="SubmittedPanel"

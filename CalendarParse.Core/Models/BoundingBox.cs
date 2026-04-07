@@ -4,7 +4,7 @@ namespace CalendarParse.Models
     /// Absolute pixel coordinates in the original (post-EXIF-rotation) image.
     /// (0,0) = top-left corner.
     /// </summary>
-    public class BoundingBox
+    public record class BoundingBox
     {
         public int X { get; set; }
         public int Y { get; set; }

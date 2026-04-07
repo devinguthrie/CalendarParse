@@ -179,4 +179,71 @@ public class BubbleStateTests
         b.ConfirmTime();
         Assert.False(b.IsFullyConfirmed); // position still needs confirming
     }
+
+    // ── EDGE CASES & INVALID TRANSITIONS ─────────────────────────────────────
+
+    [Fact]
+    public void ConfirmTime_WhenAlreadyConfirmed_IsIdempotent()
+    {
+        var b = new BubbleState(Shift());
+        b.ConfirmTime();
+        b.ConfirmTime();
+        Assert.Equal(TimeState.Confirmed, b.TimeState);
+    }
+
+    [Fact]
+    public void EditTime_WhenEditing_DoesNotChangeState()
+    {
+        var b = new BubbleState(Shift());
+        b.EditTime();
+        b.EditTime();
+        Assert.Equal(TimeState.Editing, b.TimeState);
+    }
+
+    [Fact]
+    public void SaveTime_WhenNotEditing_DoesNothing()
+    {
+        var b = new BubbleState(Shift());
+        b.SaveTime("should not save");
+        Assert.Equal(TimeState.Pending, b.TimeState);
+        Assert.Equal("9:00-5:00", b.DisplayTime);
+    }
+
+    [Fact]
+    public void BeginEditPosition_WhenEditing_DoesNotChangeState()
+    {
+        var b = new BubbleState(Shift(), PositionState.Pending);
+        b.ConfirmTime();
+        b.BeginEditPosition();
+        b.BeginEditPosition();
+        Assert.Equal(PositionState.Editing, b.PositionState);
+    }
+
+    [Fact]
+    public void ConfirmPosition_WhenAlreadyConfirmed_IsIdempotent()
+    {
+        var b = new BubbleState(Shift(), PositionState.Pending);
+        b.ConfirmTime();
+        b.ConfirmPosition();
+        b.ConfirmPosition();
+        Assert.Equal(PositionState.Confirmed, b.PositionState);
+    }
+
+    [Fact]
+    public void CancelEditPosition_WhenNotEditing_DoesNothing()
+    {
+        var b = new BubbleState(Shift(), PositionState.Pending);
+        b.CancelEditPosition();
+        Assert.Equal(PositionState.Pending, b.PositionState);
+    }
+
+    [Fact]
+    public void SetPositionState_ArbitraryState_SetsCorrectly()
+    {
+        var b = new BubbleState(Shift(), PositionState.Pending);
+        b.SetPositionState(PositionState.Editing);
+        Assert.Equal(PositionState.Editing, b.PositionState);
+        b.SetPositionState(PositionState.Confirmed);
+        Assert.Equal(PositionState.Confirmed, b.PositionState);
+    }
 }

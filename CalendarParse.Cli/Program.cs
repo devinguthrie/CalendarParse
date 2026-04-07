@@ -4,12 +4,12 @@ using System.Text.Json.Serialization;
 using CalendarParse.Cli.Services;
 using CalendarParse.Models;
 using CalendarParse.Services;
-using Emgu.CV;
-using Emgu.CV.CvEnum;
-using Emgu.CV.Structure;
 
 Console.OutputEncoding = Encoding.UTF8;
 Console.InputEncoding  = Encoding.UTF8;
+
+// ── Load .env file from repo root (if present) ────────────────────────────────
+LoadDotEnv();
 
 // ── Argument parsing ──────────────────────────────────────────────────────────
 if (args.Length == 0 || args[0] is "-h" or "--help")
@@ -20,9 +20,10 @@ if (args.Length == 0 || args[0] is "-h" or "--help")
 
 string folder = args[0];
 string nameFilter    = string.Empty;
-string overlayName   = string.Empty;
 bool   testMode      = false;
 bool   visionMode    = false;
+bool   fireworksMode = false;
+bool   glmOcrMode    = false;
 string ollamaModel    = OllamaCalendarService.DefaultModel;
 string preprocessArg  = string.Empty;
 string knownNamesArg  = string.Empty;
@@ -31,12 +32,14 @@ for (int i = 1; i < args.Length; i++)
 {
     if ((args[i] is "--name" or "-n") && i + 1 < args.Length)
         nameFilter = args[++i];
-    else if (args[i] is "--overlay" && i + 1 < args.Length)
-        overlayName = args[++i];
     else if (args[i] is "--test" or "-t")
         testMode = true;
     else if (args[i] is "--vision" or "-V")
         visionMode = true;
+    else if (args[i] is "--fireworks")
+        fireworksMode = true;
+    else if (args[i] is "--glm-ocr")
+        glmOcrMode = true;
     else if (args[i] is "--model" && i + 1 < args.Length)
         ollamaModel = args[++i];
     else if (args[i] is "--preprocess" && i + 1 < args.Length)
@@ -55,9 +58,21 @@ if (!string.IsNullOrEmpty(preprocessArg))
     }
 }
 
-if (!Directory.Exists(folder))
+// Accept either a folder or a single image file.
+bool singleFileMode = false;
+if (File.Exists(folder))
 {
-    Console.Error.WriteLine($"ERROR: Folder not found: {folder}");
+    string ext = Path.GetExtension(folder).ToLowerInvariant();
+    if (ext is not (".jpg" or ".jpeg" or ".png"))
+    {
+        Console.Error.WriteLine($"ERROR: File must be .jpg, .jpeg, or .png: {folder}");
+        return 1;
+    }
+    singleFileMode = true;
+}
+else if (!Directory.Exists(folder))
+{
+    Console.Error.WriteLine($"ERROR: Path not found: {folder}");
     return 1;
 }
 
@@ -69,39 +84,73 @@ string[] knownNamesArr = string.IsNullOrEmpty(knownNamesArg)
     ? Array.Empty<string>()
     : knownNamesArg.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
+// Resolve Fireworks backend if --fireworks was passed
+FireworksCalendarService? fireworksBackend = null;
+if (fireworksMode)
+{
+    string? apiKey = Environment.GetEnvironmentVariable("FIREWORKS_API_KEY");
+    if (string.IsNullOrWhiteSpace(apiKey))
+    {
+        Console.Error.WriteLine("ERROR: --fireworks requires the FIREWORKS_API_KEY environment variable to be set.");
+        return 1;
+    }
+    fireworksBackend = new FireworksCalendarService(
+        apiKey:     apiKey,
+        model:      ollamaModel,
+        knownNames: knownNamesArr.Length > 0 ? knownNamesArr : null);
+}
+
 if (visionMode)
 {
-    parser = new OllamaCalendarService(model: ollamaModel, knownNames: knownNamesArr.Length > 0 ? knownNamesArr : null);
-    Console.WriteLine($"Mode: VISION (Ollama model: {ollamaModel})");
+    parser = fireworksBackend
+        ?? (ICalendarParseService)new OllamaCalendarService(model: ollamaModel, knownNames: knownNamesArr.Length > 0 ? knownNamesArr : null);
+    string backend = fireworksMode ? $"Fireworks model: {ollamaModel}" : $"Ollama model: {ollamaModel}";
+    Console.WriteLine($"Mode: VISION ({backend})");
     if (knownNamesArr.Length > 0)
         Console.WriteLine($"Known names: {string.Join(", ", knownNamesArr)}");
+}
+else if (glmOcrMode)
+{
+    parser = new GlmOcrCalendarService();
+    Console.WriteLine("Mode: GLM-OCR (glm-ocr via Ollama, full-table markdown)");
 }
 else
 {
     parser = new HybridCalendarService(
         model:      ollamaModel,
-        knownNames: knownNamesArr.Length > 0 ? knownNamesArr : null);
-    Console.WriteLine($"Mode: HYBRID (Ollama model: {ollamaModel} + WinRT OCR + grid crop)");
+        knownNames: knownNamesArr.Length > 0 ? knownNamesArr : null,
+        llmBackend: fireworksBackend);
+    string backend = fireworksMode ? $"Fireworks model: {ollamaModel}" : $"Ollama model: {ollamaModel}";
+    Console.WriteLine($"Mode: HYBRID ({backend} + WinRT OCR + grid crop)");
     if (knownNamesArr.Length > 0)
         Console.WriteLine($"Known names: {string.Join(", ", knownNamesArr)}");
 }
 HybridCalendarService? hybridParser = parser as HybridCalendarService;
 
 // ── Batch processing ──────────────────────────────────────────────────────────
-var imageFiles = Directory.EnumerateFiles(folder, "*.*", SearchOption.TopDirectoryOnly)
-    .Where(f => f.EndsWith(".jpg",  StringComparison.OrdinalIgnoreCase) ||
-                f.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase) ||
-                f.EndsWith(".png",  StringComparison.OrdinalIgnoreCase))
-    .OrderBy(f => f)
-    .ToList();
-
-if (imageFiles.Count == 0)
+List<string> imageFiles;
+if (singleFileMode)
 {
-    Console.Error.WriteLine($"No jpg/jpeg/png files found in: {folder}");
-    return 1;
+    imageFiles = [Path.GetFullPath(folder)];
+    folder     = Path.GetDirectoryName(imageFiles[0])!;
+    Console.WriteLine($"Single image: {Path.GetFileName(imageFiles[0])}");
 }
+else
+{
+    imageFiles = Directory.EnumerateFiles(folder, "*.*", SearchOption.TopDirectoryOnly)
+        .Where(f => f.EndsWith(".jpg",  StringComparison.OrdinalIgnoreCase) ||
+                    f.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase) ||
+                    f.EndsWith(".png",  StringComparison.OrdinalIgnoreCase))
+        .OrderBy(f => f)
+        .ToList();
 
-Console.WriteLine($"Found {imageFiles.Count} image(s) in {folder}");
+    if (imageFiles.Count == 0)
+    {
+        Console.Error.WriteLine($"No jpg/jpeg/png files found in: {folder}");
+        return 1;
+    }
+    Console.WriteLine($"Found {imageFiles.Count} image(s) in {folder}");
+}
 if (!string.IsNullOrWhiteSpace(nameFilter))
     Console.WriteLine($"Name filter: \"{nameFilter}\"");
 if (testMode)
@@ -173,19 +222,8 @@ foreach (var imagePath in imageFiles)
             await File.WriteAllTextAsync(posPath,
                 JsonSerializer.Serialize(positions, new JsonSerializerOptions { WriteIndented = true }));
 
-            if (!string.IsNullOrEmpty(overlayName))
-            {
-                string? overlayPath = RenderOverlay(rawBytes, jsonOnly, positions, overlayName, folder, name);
-                if (overlayPath is not null)
-                    Console.Error.WriteLine($"      overlay -> {Path.GetFileName(overlayPath)}");
-                else
-                    Console.Error.WriteLine($"      overlay -> employee '{overlayName}' not found or no position data");
-            }
         }
 
-        // Save full debug report for tuning
-        string debugPath = Path.Combine(folder, name + ".debug.txt");
-        await File.WriteAllTextAsync(debugPath, output);
 
         // Count employees for the summary
         int empCount = 0;
@@ -197,13 +235,59 @@ foreach (var imagePath in imageFiles)
         }
         catch { /* ignore parse errors in summary */ }
 
-        Console.WriteLine($"OK  ({empCount} employees -> {Path.GetFileName(outPath)})  [{imageTimer.Elapsed.TotalSeconds:F1}s]");
-        results.Add((Path.GetFileName(imagePath), true, $"{empCount} employees  {imageTimer.Elapsed.TotalSeconds:F1}s"));
+        Console.WriteLine($"OK  ({empCount} employees -> {Path.GetFileName(outPath)})  [{FmtMmSs(imageTimer.Elapsed)}]");
+
+        // ── Step profiling table (--test mode + hybrid pipeline only) ────────
+        if (testMode && hybridParser?.LastRunSteps is { Count: > 0 } runSteps)
+        {
+            string stepAnsPath = Path.Combine(folder, name + ".answer.json");
+            if (File.Exists(stepAnsPath))
+            {
+                try
+                {
+                    string answerText = await File.ReadAllTextAsync(stepAnsPath);
+                    Console.WriteLine($"    {"Step",-26} {"step",6}  {"total",6}  {"delta",6}  {"score",-16}");
+                    Console.WriteLine($"    {new string('-', 26)} {new string('-', 6)}  {new string('-', 6)}  {new string('-', 6)}  {new string('-', 16)}");
+                    int prevMatched = 0;
+                    foreach (var snap in runSteps)
+                    {
+                        CompareCalendarData(snap.JsonSnapshot, answerText,
+                            out int expected, out int matched, out _);
+                        int delta    = matched - prevMatched;
+                        prevMatched  = matched;
+                        double pct   = expected > 0 ? 100.0 * matched / expected : 0;
+                        string stepT  = $"+{snap.StepElapsed.TotalSeconds:F0}s";
+                        string totT   = FmtMmSs(snap.TotalElapsed);
+                        string deltaS = delta == 0 ? "0" : delta > 0 ? $"+{delta}" : $"{delta}";
+                        Console.WriteLine(
+                            $"    {snap.StepName,-26} {stepT,6}  {totT,6}  {deltaS,6}  {matched}/{expected} ({pct:F1}%)");
+                        if (snap.StepName == "per-day strip LLM" && hybridParser.LastRunDayBreakdown is { Count: > 0 } dayBD)
+                        {
+                            string dayLine = string.Join("  ", dayBD.Select(d =>
+                                $"{d.DayName}:{(d.CellsAdded > 0 ? "+" : "")}{d.CellsAdded}"));
+                            Console.WriteLine($"    {"",-26}  {dayLine}");
+                        }
+                    }
+                    if (hybridParser.LastRunLlmCalls > 0)
+                    {
+                        int tc      = hybridParser.LastRunTotalCells;
+                        double oPct = tc > 0 ? 100.0 * hybridParser.LastRunOcrFilled / tc : 0;
+                        string retS = hybridParser.LastRunRetries > 0 ? $" | {hybridParser.LastRunRetries} {(hybridParser.LastRunRetries == 1 ? "retry" : "retries")}" : "";
+                        string holS = hybridParser.LastRunHolidayFires > 0 ? $" | {hybridParser.LastRunHolidayFires} holiday blank" : "";
+                        Console.WriteLine($"    stats: {hybridParser.LastRunLlmCalls} LLM calls | OCR fill {hybridParser.LastRunOcrFilled}/{tc} ({oPct:F0}%){retS}{holS}");
+                    }
+                    Console.WriteLine();
+                }
+                catch { /* don't let profiling table crash the run */ }
+            }
+        }
+
+        results.Add((Path.GetFileName(imagePath), true, $"{empCount} employees  {FmtMmSs(imageTimer.Elapsed)}"));
     }
     catch (Exception ex)
     {
         imageTimer.Stop();
-        Console.WriteLine($"FAIL  {ex.Message}  [{imageTimer.Elapsed.TotalSeconds:F1}s]");
+        Console.WriteLine($"FAIL  {ex.Message}  [{FmtMmSs(imageTimer.Elapsed)}]");
         results.Add((Path.GetFileName(imagePath), false, ex.Message));
     }
 }
@@ -314,6 +398,8 @@ if (testMode)
 return failed > 0 ? 1 : 0;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+/// <summary>Formats a TimeSpan as M:SS (e.g. 1:05, 0:42).</summary>
+static string FmtMmSs(TimeSpan t) => $"{(int)t.TotalMinutes}:{t.Seconds:D2}";
 static string ExtractJson(string output)
 {
     // The debug report is followed by a blank line and then the JSON
@@ -327,101 +413,6 @@ static string ExtractJson(string output)
     }
     // Fallback: return the whole output
     return output.Trim();
-}
-
-/// <summary>
-/// Draws each day's guessed shift value on the original image at the spatial position
-/// of that employee's cell and writes a _overlay_{name}.jpg sidecar.
-/// Returns the output path on success, null if the employee was not found or had no position data.
-/// </summary>
-static string? RenderOverlay(
-    byte[] imageBytes,
-    string outputJson,
-    CellPositions positions,
-    string overlayName,
-    string folder,
-    string imageName)
-{
-    using var doc = JsonDocument.Parse(outputJson);
-    if (!doc.RootElement.TryGetProperty("Employees", out var emps)) return null;
-
-    // Find employee by case-insensitive contains match
-    string? empName = null;
-    JsonElement empEl = default;
-    foreach (var e in emps.EnumerateArray())
-    {
-        string n = e.TryGetProperty("Name", out var nProp) ? nProp.GetString() ?? "" : "";
-        if (n.Contains(overlayName, StringComparison.OrdinalIgnoreCase))
-        { empName = n; empEl = e; break; }
-    }
-    if (empName is null) return null;
-
-    // Look up the employee's row; fall back to a case-insensitive scan in case
-    // JSON round-trip changed the casing of the dictionary key.
-    EmployeeRow? empRow = null;
-    if (positions.Rows.TryGetValue(empName, out var exactRow))
-        empRow = exactRow;
-    else
-        foreach (var kv in positions.Rows)
-            if (kv.Key.Equals(empName, StringComparison.OrdinalIgnoreCase))
-            { empRow = kv.Value; break; }
-    if (empRow is null) return null;
-
-    // Prefer CompareDisplayY (clearly above cell) so the label doesn't cover the original content.
-    // Fall back to EstimatedCellY only if CompareDisplayY is off-screen (image top was clipped).
-    int labelY = empRow.CompareDisplayY > 0
-        ? empRow.CompareDisplayY
-        : empRow.EstimatedCellY;
-
-    using var mat = new Mat();
-    CvInvoke.Imdecode(imageBytes, ImreadModes.ColorBgr, mat);
-    if (mat.IsEmpty) return null;
-
-    if (!empEl.TryGetProperty("Shifts", out var shifts)) return null;
-
-    int dayIdx = 0;
-    foreach (var shift in shifts.EnumerateArray())
-    {
-        if (positions.Columns.TryGetValue(dayIdx, out var col))
-        {
-            string shiftVal = shift.TryGetProperty("Shift", out var sv) ? sv.GetString() ?? "" : "";
-            string label    = string.IsNullOrEmpty(shiftVal) ? "\u2014" : shiftVal; // em-dash for blank
-
-            int colW      = Math.Max(1, col.EstimatedCellXEnd - col.EstimatedCellXStart);
-            double scale  = Math.Clamp(colW / 130.0, 0.28, 0.5);
-            int thickness = 1;
-            int baseline  = 0;
-            var sz        = CvInvoke.GetTextSize(label, FontFace.HersheySimplex, scale, thickness, ref baseline);
-            int textX     = col.EstimatedCellXStart + (colW - sz.Width) / 2;
-            int textY     = labelY + sz.Height / 2;
-
-            // White background box for readability
-            CvInvoke.Rectangle(mat,
-                new System.Drawing.Rectangle(
-                    textX - 2, textY - sz.Height - baseline - 2,
-                    sz.Width + 4, sz.Height + baseline + 4),
-                new MCvScalar(255, 255, 255), -1);
-
-            // Dark-blue text (BGR: 180, 30, 30)
-            CvInvoke.PutText(mat, label,
-                new System.Drawing.Point(textX, textY),
-                FontFace.HersheySimplex, scale,
-                new MCvScalar(180, 30, 30), thickness);
-        }
-        dayIdx++;
-    }
-
-    // Label which employee this overlay is for
-    CvInvoke.PutText(mat, $"Overlay: {empName}",
-        new System.Drawing.Point(4, 22),
-        FontFace.HersheySimplex, 0.55,
-        new MCvScalar(180, 30, 30), 2);
-
-    string safeName = string.Concat(
-        overlayName.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries));
-    string outPath = Path.Combine(folder, $"{imageName}_overlay_{safeName}.jpg");
-    CvInvoke.Imwrite(outPath, mat);
-    return outPath;
 }
 
 /// <summary>
@@ -632,4 +623,32 @@ static void PrintUsage()
     Console.WriteLine("Requires:");
     Console.WriteLine("  Ollama running locally (https://ollama.com) with the model pulled.");
     Console.WriteLine("  WinRT OCR available on Windows 10+ (no extra installation needed).");
+}
+
+static void LoadDotEnv()
+{
+    // Walk up from the executable's location to find a .env file (handles both
+    // `dotnet run` from the repo root and a published binary in a sub-folder).
+    string? dir = AppContext.BaseDirectory;
+    while (dir is not null)
+    {
+        string candidate = Path.Combine(dir, ".env");
+        if (File.Exists(candidate))
+        {
+            foreach (string line in File.ReadAllLines(candidate))
+            {
+                if (string.IsNullOrWhiteSpace(line) || line.TrimStart().StartsWith('#'))
+                    continue;
+                int eq = line.IndexOf('=');
+                if (eq <= 0) continue;
+                string key   = line[..eq].Trim();
+                string value = line[(eq + 1)..].Trim();
+                // Only set if not already present — real env vars take priority.
+                if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(key)))
+                    Environment.SetEnvironmentVariable(key, value);
+            }
+            return;
+        }
+        dir = Path.GetDirectoryName(dir);
+    }
 }

@@ -22,7 +22,7 @@ public class OllamaCalendarService : ICalendarParseService
         new(@"^\d+\.?\d*\s+\w", RegexOptions.Compiled);
 
     private readonly string _baseUrl;
-    private readonly string _model;
+    protected readonly string _model;
     internal readonly IReadOnlyList<string> _knownNames;
 
     public OllamaCalendarService(string baseUrl = DefaultBaseUrl, string model = DefaultModel, IEnumerable<string>? knownNames = null)
@@ -715,7 +715,7 @@ public class OllamaCalendarService : ICalendarParseService
     /// <summary>
     /// Core Ollama call with JSON normalization. Returns the cleaned model text (or parsed JSON string).
     /// </summary>
-    internal async Task<string> CallOllamaAsync(
+    internal virtual async Task<string> CallOllamaAsync(
         string base64Image, string prompt, CancellationToken ct, bool isJson = true, int numPredict = -1)
     {
         var requestBody = new
@@ -761,67 +761,79 @@ public class OllamaCalendarService : ICalendarParseService
             }
             catch { return MakeError($"Could not parse Ollama wrapper: {Truncate(rawBody, 300)}"); }
 
-            // Strip Qwen3 thinking blocks <think>...</think> before any other processing
-            modelText = Regex.Replace(modelText, @"<think>[\s\S]*?</think>", "", RegexOptions.IgnoreCase).Trim();
-
-            // Strip markdown fences
-            modelText = Regex.Replace(modelText.Trim(), @"^```\w*\s*", "", RegexOptions.Multiline);
-            modelText = Regex.Replace(modelText,        @"```\s*$",    "", RegexOptions.Multiline);
-            modelText = modelText.Trim();
-
-            // Normalize unicode quotes
-            modelText = modelText
-                .Replace('\u201C', '"').Replace('\u201D', '"')
-                .Replace('\u2018', '\'').Replace('\u2019', '\'')
-                .Replace('\u00A0', ' ').Replace('\u2014', '-').Replace('\u2013', '-')
-                .Replace('\u2026', ' ').Replace('\u00AB', '"').Replace('\u00BB', '"')
-                .Replace('\u201E', '"');
-
-            if (!isJson) return modelText;
-
-            // Normalize US date format M/D/YY or M/D/YYYY → ISO 8601
-            modelText = Regex.Replace(modelText,
-                @"\b(\d{1,2})/(\d{1,2})/(\d{2})\b",
-                m => $"20{m.Groups[3].Value}-{int.Parse(m.Groups[1].Value):D2}-{int.Parse(m.Groups[2].Value):D2}");
-            modelText = Regex.Replace(modelText,
-                @"\b(\d{1,2})/(\d{1,2})/(\d{4})\b",
-                m => $"{m.Groups[3].Value}-{int.Parse(m.Groups[1].Value):D2}-{int.Parse(m.Groups[2].Value):D2}");
-
-            // Sanitize malformed dates like "2025-10-26-01"
-            modelText = Regex.Replace(modelText, @"(\d{4}-\d{2}-\d{2})-\d+", "$1");
-
-            // Zero-pad single-digit month/day in ISO dates: 2025-11-1 → 2025-11-01
-            modelText = Regex.Replace(modelText, @"\b(\d{4})-(\d{1,2})-(\d{1,2})\b",
-                m => $"{int.Parse(m.Groups[1].Value):D4}-{int.Parse(m.Groups[2].Value):D2}-{int.Parse(m.Groups[3].Value):D2}");
-
-            // Remove stray hours numbers trailing shift values
-            modelText = Regex.Replace(modelText, @"(""Shift""\s*:\s*"")(\d+\.?\d*)("")", "$1$3");
-            modelText = Regex.Replace(modelText, @"(?<=[""null])\s+\d+(\.\d+)?(?=\s*[,}\]])", "");
-            modelText = Regex.Replace(modelText, @"""\s+\d+(\.\d+)?\s*:", "\":");
-
-            // Extract outermost JSON structure ({ or [)
-            char open  = modelText.Contains('[') && modelText.IndexOf('[') < (modelText.IndexOf('{') < 0 ? int.MaxValue : modelText.IndexOf('{')) ? '[' : '{';
-            char close = open == '[' ? ']' : '}';
-            int  start = modelText.IndexOf(open);
-            int  end   = modelText.LastIndexOf(close);
-            if (start < 0 || end <= start) { lastRaw = modelText; continue; }
-
-            string json = modelText[start..(end + 1)];
-            json = RepairTruncatedJson(json);
-            json = EscapeControlCharsInStrings(json);
-
-            try { JsonDocument.Parse(json); return json; }
-            catch { lastRaw = json; /* retry */ }
+            var (cleaned, parsedOk) = ApplyScrubbing(modelText, isJson);
+            if (parsedOk) return cleaned;
+            lastRaw = cleaned;
         }
 
         return lastRaw; // return best effort even if not valid JSON
     }
 
     /// <summary>
+    /// Applies all post-processing scrubbing to raw LLM output.
+    /// Returns the cleaned string and whether it represents valid (parseable) JSON.
+    /// Extracted so subclasses that use a different LLM backend can reuse this logic.
+    /// </summary>
+    protected static (string cleaned, bool parsedOk) ApplyScrubbing(string modelText, bool isJson)
+    {
+        // Strip Qwen3 thinking blocks <think>...</think> before any other processing
+        modelText = Regex.Replace(modelText, @"<think>[\s\S]*?</think>", "", RegexOptions.IgnoreCase).Trim();
+
+        // Strip markdown fences
+        modelText = Regex.Replace(modelText.Trim(), @"^```\w*\s*", "", RegexOptions.Multiline);
+        modelText = Regex.Replace(modelText,        @"```\s*$",    "", RegexOptions.Multiline);
+        modelText = modelText.Trim();
+
+        // Normalize unicode quotes
+        modelText = modelText
+            .Replace('\u201C', '"').Replace('\u201D', '"')
+            .Replace('\u2018', '\'').Replace('\u2019', '\'')
+            .Replace('\u00A0', ' ').Replace('\u2014', '-').Replace('\u2013', '-')
+            .Replace('\u2026', ' ').Replace('\u00AB', '"').Replace('\u00BB', '"')
+            .Replace('\u201E', '"');
+
+        if (!isJson) return (modelText, true);
+
+        // Normalize US date format M/D/YY or M/D/YYYY → ISO 8601
+        modelText = Regex.Replace(modelText,
+            @"\b(\d{1,2})/(\d{1,2})/(\d{2})\b",
+            m => $"20{m.Groups[3].Value}-{int.Parse(m.Groups[1].Value):D2}-{int.Parse(m.Groups[2].Value):D2}");
+        modelText = Regex.Replace(modelText,
+            @"\b(\d{1,2})/(\d{1,2})/(\d{4})\b",
+            m => $"{m.Groups[3].Value}-{int.Parse(m.Groups[1].Value):D2}-{int.Parse(m.Groups[2].Value):D2}");
+
+        // Sanitize malformed dates like "2025-10-26-01"
+        modelText = Regex.Replace(modelText, @"(\d{4}-\d{2}-\d{2})-\d+", "$1");
+
+        // Zero-pad single-digit month/day in ISO dates: 2025-11-1 → 2025-11-01
+        modelText = Regex.Replace(modelText, @"\b(\d{4})-(\d{1,2})-(\d{1,2})\b",
+            m => $"{int.Parse(m.Groups[1].Value):D4}-{int.Parse(m.Groups[2].Value):D2}-{int.Parse(m.Groups[3].Value):D2}");
+
+        // Remove stray hours numbers trailing shift values
+        modelText = Regex.Replace(modelText, @"(""Shift""\s*:\s*"")(\d+\.?\d*)("")", "$1$3");
+        modelText = Regex.Replace(modelText, @"(?<=[""null])\s+\d+(\.\d+)?(?=\s*[,}\]])", "");
+        modelText = Regex.Replace(modelText, @"""\s+\d+(\.\d+)?\s*:", "\":");
+
+        // Extract outermost JSON structure ({ or [)
+        char open  = modelText.Contains('[') && modelText.IndexOf('[') < (modelText.IndexOf('{') < 0 ? int.MaxValue : modelText.IndexOf('{')) ? '[' : '{';
+        char close = open == '[' ? ']' : '}';
+        int  start = modelText.IndexOf(open);
+        int  end   = modelText.LastIndexOf(close);
+        if (start < 0 || end <= start) return (modelText, false);
+
+        string json = modelText[start..(end + 1)];
+        json = RepairTruncatedJson(json);
+        json = EscapeControlCharsInStrings(json);
+
+        try { JsonDocument.Parse(json); return (json, true); }
+        catch { return (json, false); }
+    }
+
+    /// <summary>
     /// Checks if the model is already loaded via /api/ps. If not, sends a
     /// lightweight text-only request to load it before the heavy image call.
     /// </summary>
-    internal async Task EnsureModelLoadedAsync(CancellationToken ct)
+    internal virtual async Task EnsureModelLoadedAsync(CancellationToken ct)
     {
         try
         {
@@ -931,10 +943,10 @@ public class OllamaCalendarService : ICalendarParseService
         return $"{int.Parse(m.Groups[1].Value):D4}-{int.Parse(m.Groups[2].Value):D2}-{int.Parse(m.Groups[3].Value):D2}";
     }
 
-    private static string MakeError(string msg) =>
+    protected static string MakeError(string msg) =>
         JsonSerializer.Serialize(new { ERROR = msg }, new JsonSerializerOptions { WriteIndented = true });
 
-    private static string Truncate(string s, int max) =>
+    protected static string Truncate(string s, int max) =>
         s.Length <= max ? s : s[..max] + "…";
 
     /// <summary>

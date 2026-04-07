@@ -1,6 +1,6 @@
 # CalendarParse CLI — Experiment Log
 
-_Last updated: 2026-04-27 (session 22). Full verbose history in experiment-log.old.md._
+_Last updated: 2026-04-06 (session 27). Full verbose history in experiment-log.old.md._
 
 Test images: IM(1) = 11 employees, 77 shifts, Oct 26–Nov 1 2025. IM(2) = 13 employees, 91 shifts, Nov 23–29 2025. **IM(3) = 12 employees, 84 shifts, Sep 21–27 2025.** IM(4) = 13 employees, 91 shifts, Jul 27–Aug 2 2025. IM(5) = 13 employees, 91 shifts, Jul 20–26 2025. Combined = **434 shifts** (5 images).
 
@@ -51,9 +51,19 @@ Test images: IM(1) = 11 employees, 77 shifts, Oct 26–Nov 1 2025. IM(2) = 13 em
 
 ---
 
-## Phase Details — Milestones Only
+## Experiment Log
 
-_Reverted/failed phases are in the summary table above. Only committed milestones detailed here._
+> **Update Rules** — follow these exactly so the log stays clean:
+> 1. **New entries append at the BOTTOM** — below the most recent Session entry, above nothing.
+> 2. **Use `Session N` format** (not "Phase N"). Session number matches the `_Last updated_` front-matter.
+> 3. **Include the score** in the heading: `### Session N — Description (N/434 = X%)`.
+> 4. **Reverted experiments still get an entry.** Mark heading with `(REVERTED, N/434)`.
+> 5. **Separate each entry with `---`** on its own line above the heading.
+> 6. **Do not touch the Phase archive** (Phase 9e through Phase 63 below) — it is frozen history.
+
+---
+
+_Phase-era archive (pre-session-22, Phase N format, oldest-first). Only committed milestones. Full detail in `tried_changes.json`._
 
 ### Phase 9e — X-Marks Pass + Red Ink Hint (65.3% avg)
 Added Pass 4 `ExtractXMarksAsync`: binary "which cells have X?" query. Applied as overlay: blank→x only. Red ink hint in prompts. +22 pts over Phase 9d.
@@ -114,7 +124,7 @@ Three incremental improvements to handle the Ciara/Seena truncation/row-swap clu
 
 These three commits together (+3 pts) brought the score from 227 to 230/252 — the current all-time best.
 
-### Phases 56–58 — Duplicate Detection Attempts (All Reverted, Session 17)
+### Phases 56–58 — Duplicate Detection Attempts (All Reverted, 252-shift era)
 
 **Diagnostic finding — Thu Oct30 root cause**: Investigated `ComputeDayColBoundsFromOcr()` boundaries for IM(1) Thu Oct30. Debug output showed clean, geometrically correct boundaries (center=907, x=[830,984], w=154, uniform ~154px spacing). The column boundary is NOT the root cause. Actual cause: **green highlighted Andee cell** in the Thu column acts as a visual anchor — the LLM reads it for rows 2 (Brittney) and 8 (Halle) and loses row position, producing "10:00-6:30" × 3 in the output. At temp=0, all re-queries against the same strip image return the same wrong answer — the visual anchor cannot be overcome by prompt changes. **Thu Oct30 cluster is irreducible with re-query approaches.**
 
@@ -248,6 +258,12 @@ IM(2) minor regression (−1): Nov26 (Wed) now triggers uniform-RTO and the retr
 
 **Key lesson**: Always verify which function is actually called before optimizing a prompt. The hybrid pipeline bypasses OllamaCalendarService.ExtractColumnAsync entirely — all column LLM calls go through HybridCalendarService.ExtractColumnFromImageAsync.
 
+---
+
+_Session era (Session N format, ascending). **New entries append at the end of this file.**_
+
+---
+
 ### Session 22 — Engineering Review: Dead Code Removal + Prompt Externalization (394/434 = 90.8%, no change)
 
 **Goal**: `/plan-eng-review` — three tasks: (1) dead code cleanup in CLI, (2) externalize all LLM prompts to JSON, (3) general C# best practices.
@@ -269,3 +285,211 @@ IM(2) minor regression (−1): Nov26 (Wed) now triggers uniform-RTO and the retr
 - Template keys: `weekend_hint`, `reinforced_weekend_hint`, `strip_column`, `full_image_column`, `reinforced_column`, `last_employee_requery`, `penultimate_employee_requery`, `extract_header`, `extract_names`, `extract_names_known_names_suffix`, `extract_names_additional_hints_suffix`, `extract_names_ocr_fragments_suffix`, `extract_x_marks`, `extract_column`, `extract_column_anchored`, `extract_all_shifts`, `extract_row`
 
 **Result**: Build clean (0 errors), benchmark **394/434 (90.8%)** — no regression.
+
+---
+
+### Session 23 — Fireworks Cloud Backend: qwen3-vl-30b-a3b-instruct (REVERTED, 250/434 = 57.6%)
+
+**Hypothesis**: Fireworks serverless API with a larger model (30B MoE) would match or beat `qwen2.5vl:7b` on Ollama while removing the local GPU requirement.
+
+**Infrastructure work (committed, kept)**:
+- `FireworksCalendarService.cs`: subclasses `OllamaCalendarService`, overrides `CallLlmAsync` to POST to Fireworks API (`/inference/v1/chat/completions`), Bearer auth from `FIREWORKS_API_KEY` env var, `seed=42` + `temperature=0.0` for determinism
+- `Program.cs`: added `--fireworks` flag, `.env` auto-loading (`LoadDotEnv()`), single-file mode (`File.Exists` check)
+- `scripts/probe-fireworks-determinism.ps1`: 3-call determinism probe confirmed `seed=42` + `temperature=0` produces bit-for-bit identical outputs on Fireworks serverless
+- Removed overlay image generation and `.debug.txt` output from CLI
+
+**Benchmark result**: 250/434 (57.6%) — **−144 shifts vs baseline**
+
+| Image | Score | Notes |
+|-------|-------|-------|
+| IM (1) | 40/77 (52%) | |
+| IM (2) | 66/91 (73%) | |
+| IM (3) | 58/84 (69%) | |
+| IM (4) | **16/91 (18%)** | Almost all shifts blank — total failure |
+| IM (5) | 70/91 (77%) | |
+
+**Root cause**: `qwen3-vl-30b-a3b-instruct` is a different model family from `qwen2.5vl:7b`. The `2.5VL` architecture was specifically designed for dense visual table reading; Qwen3 is a general-purpose model that lacks the same visual grounding capability. The model returns empty strings for shift cells ("got \"\" expected \"9:00-5:30\"") rather than misreading them — it is not engaging with the cell content at all. IM(4) collapse to 16/91 confirms the model architecture is not suitable for this task.
+
+**Determinism confirmed** (3 probes, identical responses). Fireworks infrastructure works correctly — the model choice is the problem.
+
+**Infrastructure kept** (FireworksCalendarService, --fireworks flag, .env loading, single-file mode, removed debug outputs). The `--fireworks` flag can be reused if a `qwen2.5vl`-family model becomes available on Fireworks.
+
+---
+
+### Session 24 — Research: Kimi K2.5 Test + Infrastructure Research (394/434 = 90.8%, no change)
+
+**Goal**: Evaluate remaining Fireworks cloud model options; research upstream tooling improvements (table-transformer, Ollama `format` param, GLM-OCR).
+
+**Kimi K2.5 (`accounts/fireworks/models/kimi-k2p5`) — FAILED, not committed**
+
+Tested on IM(1). Kimi K2.5 is a reasoning model. Its chain-of-thought reasoning leaked into the JSON names field in pass 2: `"Let me trace through the rows visually:"` appeared as an employee name string. All downstream passes received a corrupted names list. Fatal for the pipeline — reasoning chain bleed cannot be suppressed without a system-prompt instruction the model ignores. **Not committed. Added to anti-patterns.**
+
+**qwen2p5-vl-72b — NOT TESTED, blocked**
+
+Fireworks serverless endpoint for this model returns empty responses (not a 4xx error, just no content). The model is on-demand only at $10/hr minimum. Not viable. **Added to anti-patterns.**
+
+**Research findings (no code changes except GLM-OCR service design):**
+
+1. **table-transformer** (Microsoft, GitHub): Python-only, PyTorch/conda, trained on PubTables-1M (academic PDFs). Outputs bounding boxes, requires separate OCR for cell text. Last updated 3 years ago. No C# bindings. Already superseded by existing OpenCV grid detection in this codebase. **Verdict: NOT applicable.**
+
+2. **Ollama `format` parameter**: Confirmed technically feasible via `OllamaCalendarService.CallOllamaAsync` subclass (method is `internal virtual`). `format: "json"` enforces grammar-sampling (constrained decoding in llama.cpp) — structurally different from natural language output instructions. Would genuinely prevent array truncation (`minItems`/`maxItems`) without the re-query fallback. However, all 57 remaining errors are semantic (wrong cell read, row-offset, value swap) not structural — expected score impact near zero. Low priority but architecturally cleaner than the current scrubbing approach.
+
+   **Clarification on "JSON schema in prompts" (Session 23 research note 3)**: What the prompts currently have is natural language output instructions (instruction-following, model *chooses* to comply). A proper JSON Schema via the `format` parameter operates at grammar-sampling level — the model *cannot* produce non-conforming output. These are different in kind. The `enum` constraint is not viable for this task (time ranges are open-ended), but `minItems`/`maxItems` on the array would be new and real.
+
+3. **GLM-OCR (zai-org/glm-ocr)**: Task-prefix prompt format (`"Table Recognition:"`), outputs markdown table text. Ollama bug #14498 (Windows/NVIDIA) blocks deployment on this machine — model fails to load with 500 Internal Server Error, unresolved as of Ollama v0.20.2. **Interface designed and committed** — `GlmOcrCalendarService.cs` created in `CalendarParse.Cli/Services/`. Architecture: one call (full image + task prefix) → markdown table → deterministic parser → shift schema. No score impact now; ready for deployment when bug is resolved or on Linux/Mac.
+
+**Score unchanged at 394/434 (90.8%)**.
+
+---
+
+### Session 25 — Re-benchmark qwen3-vl-30b with P20 Pipeline (REVERTED/rejected, 329/434 = 75.8%)
+
+**Goal**: Re-test `accounts/fireworks/models/qwen3-vl-30b-a3b-instruct` against the full P20 pipeline (retail-context hints, OCR supplement, session name pool, narrow-strip 8:xx re-query). Session 23 had tested this model early (before retail hints) and got 250/434. The hypothesis was that the retail hint (+17 in Phase 63) might close the gap.
+
+**No code changes made.** Fireworks infrastructure committed in Session 23 was reused unchanged.
+
+**Benchmark result**: 329/434 (75.8%) — still **−65 shifts below qwen2.5vl:7b baseline**
+
+| Image | Score | Notes |
+|-------|-------|-------|
+| IM(1) | 61/77 (79.2%) | |
+| IM(2) | 62/91 (68.1%) | Rate limits: no; Athena still invisible |
+| IM(3) | 58/84 (69.0%) | Rate limit hit on 2 of 7 days; + roster alignment failure |
+| IM(4) | 77/91 (84.6%) | Header LLM read "Unknown 0" → OCR override to "July 2025" |
+| IM(5) | 71/91 (78.0%) | Rate limit hit on 1 day (Seena got raw error JSON) |
+
+**Root causes of regression vs baseline**:
+
+1. **Rate limit errors (Fireworks serverless throttling)**: IM(3) had `RATE_LIMIT_EXCEEDED` on 2 of 7 day strips (Ciara's rows). IM(5) had 1 rate limit error (Seena). Rate limit errors are returned as raw JSON error strings in the shift value cell — scorer counts them as wrong values. This alone accounts for ~7 errors.
+
+2. **Roster alignment failure in IM(3) bottom cluster**: Megan completely MISSING (0/7) despite being on the roster. Shifts that should have been Megan's were displaced to Clara/Athena/Tori as EXTRA (spurious) entries. The LLM is assigning the correct shift values to the wrong employee row in the bottom 6-employee cluster. Pattern: `Kyleigh 2025-09-21: got "RTO" expected "11:30-4:00"` while `Megan 2025-09-21: MISSING expected "RTO"` — values correctly present but mapped one employee off. This is a visual anchoring failure (row disambiguation) that the pipeline cannot recover.
+
+3. **IM(4) header failure**: Pass 1 returned "Unknown 0" for the month (LLM failed to read the header); OCR fallback correctly overrode to "July 2025". Not a scoring issue but novel failure mode vs qwen2.5vl.
+
+**Even excluding rate-limit errors**, IM(4)=84.6% and IM(1)=79.2% are both significantly below baseline (~90%+ per image). The retail-context hint improved IM(4) dramatically vs Session 23 (16→77/91) but the model is still architecturally weaker for dense row-disambiguation.
+
+**rolm-ocr assessment**: The `rolm-ocr` model outputs markdown, not JSON. It cannot be used as a drop-in for the strip LLM. Integration would require a separate parser that converts markdown table text to the shift record schema. Deferred to future session.
+
+**Conclusion**: qwen3-vl-30b confirmed weaker than qwen2.5vl:7b for this task even with the P20 pipeline applied. The architecture difference (general MoE vs specialized visual table reader) is the root cause. No further testing of this model. Best score remains 394/434.
+
+---
+
+### Session 26 — GLM-OCR: `glm-ocr` Model Benchmark (402/434 = 92.6%, **new best**)
+
+**Goal**: Deploy and benchmark the `glm-ocr` Ollama model on the full 5-image test set. Previously believed blocked by Ollama bug #14498.
+
+**Root cause of prior crash (CORRECTED)**: The prior crash was NOT Ollama bug #14498. It was `OLLAMA_CONTEXT_LENGTH=262144` set globally in the system environment → `ggml_nbytes(src0) > INT_MAX` in CUDA copy (`cpy.cu:396`). The fix: pass `options: { num_ctx: N }` per-invocation to override the global.
+
+**Key discoveries during bring-up**:
+1. **ctx size calibration**: 4096 → too small (vision encoder `a->ne[2]*4 == b->ne[0]` dim mismatch). 32768 → works for landscape (1600×1200). Portrait image IM(3) (1200×1600) requires 65536 (different CUDA tile dimensions). Fixed via retry loop: try 32768, if HTTP 500 with the dimension-mismatch error, retry at 65536.
+2. **HTML output format**: `GlmOcrCalendarService.cs` was written expecting markdown pipe tables. GLM-OCR actually outputs `<table class="table table-bordered"><thead>...</thead><tbody>...</tbody></table>`. Discovered via direct Ollama API probe. Rewrote parser entirely.
+3. **1-cell holiday column**: Thanksgiving (Thu Nov27) has 1 `<td>` per employee in IM(2) instead of 2 (shift + hours). This shifted all subsequent column indices by 1. Fixed via sliding-window extraction: if `row[col+1]` looks like a shift value (time range, "x", PTO) rather than an hours number, the current day consumed only 1 cell → advance by 1 instead of 2.
+4. **OCR date misread**: GLM-OCR misread the Sunday date in IM(1) — output "10/28/2025" (Tuesday!) at the Sunday column. Fixed via majority-vote anchor Sunday: for each date in the date row, back-compute the implied Sunday (`date − dayOffset`); take the most-common Sunday (usually 6-of-7 are correct) and derive all 7 dates from it. Day-of-week offsets come from the `SUN/MON/TUES/...` header row (or positional 0–6 fallback).
+
+**Benchmark result**: **402/434 (92.6%)** — new best, +8 shifts over 394/434 hybrid baseline.
+
+| Image | Score | Notes |
+|-------|-------|-------|
+| IM(1) | 74/77 (96.1%) | 3 errors: Sarah Oct29 shift/x, Jenny Oct26 time diff (6:00 vs 6:30), Kyleigh Oct28 shift end diff |
+| IM(2) | 90/91 (98.9%) | 1 genuine error: Halle Nov28 (12:00-4:30 vs 11:00-7:30). "Clara"/"Ciara" naming EXTRA entries (don't count against score) |
+| IM(3) | 64/84 (76.2%) | 20 errors — "Cydee"/"Cyndee" phantom row, OCR misreads in portrait orientation, "xx" cells not read |
+| IM(4) | 86/91 (94.5%) | 5 errors: Brittney Jul31 shift/x, Destiny/Seena "xx" not read (model misread) |
+| IM(5) | 88/91 (96.7%) | 3 errors: time-range diffs, Kyleigh x/RTO swap |
+
+**Remaining errors analysis**:
+- **"xx" cells (4 errors in IM(3)/IM(4))**: GLM-OCR reads these as empty or wrong shift. Pure model misread — cannot fix in parser.
+- **"Clara"/"Cydee" phantom rows**: GLM-OCR misspells "Ciara"→"Clara" and "Cyndee"→"Cydee". Test scorer handles these via fuzzy matching (score correct), but it also creates phantom extra rows because GLM-OCR output has BOTH misspelled AND sometimes correct names (two rows). Parser deduplication could fix these.
+- **IM(3) portrait-orientation errors (Cyndee, Megan, Kyleigh)**: Wrong shifts for several employees — model-level misreads; hard to fix without image preprocessing or larger model.
+
+**Architecture**: `--glm-ocr` flag routes to `GlmOcrCalendarService`. One API call per image (full image, no strip). ~12–70 seconds per image. Inference time: landscape ~12s, portrait ~71s. The `HybridCalendarService` (qwen2.5vl + strip) pipeline is still available via `--model qwen2.5vl:7b` (default).
+
+---
+
+### Session 27 — Fireworks Model Evaluations (glm-5, qwen3p6-plus, qwen3-vl-30b-a3b-thinking)
+
+**Hypothesis**: Additional Fireworks-hosted models might match or exceed `qwen2.5vl:7b` accuracy on the hybrid pipeline.
+
+**Models tested:**
+
+#### accounts/fireworks/models/glm-5 — 117/434 (27.0%)
+Text-only model. Returned 0 employees on every image; all names populated via OCR name supplement only. Final score 117/434 is exactly what OCR supplement alone produces (no LLM shift extraction). The 117 "correct" matches are all from the empty-shift ≡ x equivalence rule on employees who happened to have days off. Not a vision model. Do not retest.
+
+#### accounts/fireworks/models/qwen3p6-plus — 117/434 (27.0%)
+Same failure mode as glm-5. Identical score (27.0%) and identical 0-employees-per-image pattern. Text-only model, no vision capability. Do not retest.
+
+#### accounts/fireworks/models/qwen3-vl-30b-a3b-thinking — 212/434 (48.8%)
+Vision-capable model. Employee names extracted correctly (11–14 per image). However shift reading was severely degraded — step profiling table showed only 2 of 7 day strips produced cells (Sun:+X, Sat:+X, all others 0). Thinking chain burns through token budget before cell reading; most strip calls returned empty or near-empty arrays. Per-image: IM(1)=37/77, IM(2)=48/91, IM(3)=44/84, IM(4)=34/91, IM(5)=49/91. 4:01 per image (vs ~1:00 for qwen2.5vl:7b). Far below baseline on both accuracy and speed. Do not retest.
+
+**Infrastructure note**: No code changes; all three benchmarks ran via the existing `--fireworks` flag. All outputs saved to `fw-glm5-bench.txt`, `fw-qwen3p6plus-bench.txt`, `fw-qwen3vl-thinking-bench.txt`.
+
+---
+
+### Session 28 — Portrait Crash Root Cause Research + Fix (402/434 = 92.6%, regression recovery)
+
+**Context**: Previous benchmark run discovered GLM-OCR's IM(3) portrait is broken — returns 0/0 shifts with a GGML assertion crash. IM(1) (landscape) still worked at 74/77. Session goal was to diagnose and fix the crash.
+
+**Research phase — Ollama issues investigated**:
+- **[#14171](https://github.com/ollama/ollama/issues/14171)** ("glm-ocr fails with GGML_ASSERT") — **open**: same stack trace (`applyMRoPE` → `TextModel.Shift` → KV cache shift). Ollama dev marked "needs more info."
+- **[#14401](https://github.com/ollama/ollama/issues/14401)** ("rope dimension metadata missing") — **closed**: Root cause: `hidden_size=1536`, `num_heads=16` → correct rope_dim=96, but Ollama defaults to 128 because the GGUF lacks `glmocr.rope.dimension_count` metadata. Reporter's fix: change `num_ctx` from 7000 to **8192**.
+- **[#14321](https://github.com/ollama/ollama/issues/14321)** ("tight imagesize restriction in API but not CLI") — **closed as duplicate** of [#14171](https://github.com/ollama/ollama/issues/14171). Reporter had `num_ctx=4000` → crash; `num_ctx=8192` → works. Ollama dev confirmed fix.
+
+**num_ctx=8192 attempt — DID NOT FIX OUR CRASH**: Changed `loop { 32768, 65536 }` to single `num_ctx=8192`. IM(3) still returned GGML assertion crash. The GitHub-issues fix works for smaller images; our 1200×1600 portrait triggers the assertion regardless of `num_ctx`.
+
+**Root cause (empirical)**: The GGML assertion `a->ne[2] * 4 == b->ne[0]` fires in `ggml_rope_multi` when Ollama processes portrait images tall enough to enter a multi-tile code path. Our earlier session had confirmed:
+- 1200×1600 → crash (regardless of num_ctx)
+- 1008×1344 → works at num_ctx=32768
+
+Conclusion: the crash is governed by image height (tile count), not context length. Portrait images with height > 1344px exceed the single-tile threshold and hit the broken M-RoPE sections assertion.
+
+**Fix implemented** (`GlmOcrCalendarService.cs`):
+1. Added `ResizeForGlmOcrIfNeeded(byte[])` method: if `src.Height > 1344`, scales proportionally so `height = 1344` using `CvInvoke.Resize` (Emgu.CV, already in project). `Inter.Area` for downscaling. Output encoded as JPEG.
+2. Called in `ProcessAsync` before base64 encoding.
+3. Reverted `num_ctx` back to 32768 (8192 did not help; 32768 works post-resize since resized images are single-tile).
+4. Removed the dead `VisionDimError` retry loop (the retry never fired correctly anyway — Ollama JSON-encodes `>` as `\u003e` so the `Contains` check always missed).
+
+**Benchmark result (post-fix)**: **402/434 (92.6%)** — portrait crash resolved, IM(3) restored to 64/84.
+
+| Image | Score | Notes |
+|-------|-------|-------|
+| IM(1) | 74/77 | Unchanged |
+| IM(2) | 90/91 | Unchanged |
+| IM(3) | 64/84 | Restored from 0/0 crash |
+| IM(4) | 86/91 | Unchanged |
+| IM(5) | 88/91 | Unchanged |
+
+**Note**: The root-cause [Ollama #14171](https://github.com/ollama/ollama/issues/14171) (open — M-RoPE assertion in multi-tile code path) is still **open**. The resize is a temporary workaround. When Ollama ships the upstream vendor sync fix, remove `ResizeForGlmOcrIfNeeded` and test full-resolution portrait.
+
+**Phantom-row dedup (planned, not implemented this session)**: The IM(3) 64/84 score still has "Cydee"/"Cyndee" phantom row duplicates and other portrait-quality errors. Phantom dedup was the next planned experiment but was deferred because the session was consumed by crash diagnosis.
+
+---
+
+### Session 29 — Phantom Dedup Attempt + keep_alive/num_predict Crash Hardening (402/434 = 92.6%)
+
+**Context**: Starting from 402/434 (92.6%), session goal was to implement phantom employee deduplication (+7 projected) and improve benchmark reliability.
+
+**Phantom dedup attempt (REVERTED)**:
+
+Implemented Levenshtein ≤ 2 dedup in `ParseHtmlTable` — keep first occurrence, discard later rows within distance 2. Benchmark result: **380/434 (87.6%)** — catastrophic −22 regression.
+
+Root cause: `Andee` (length 5) and `Cyndee` (length 6) both end in `-dee` and are distance 2. Dedup kept `Andee` and dropped `Cyndee` as a phantom. The same false positive occurred across IM(1), IM(2), IM(4), IM(5). IM(3) itself showed **zero improvement** — the raw HTML in the current run contained only `Cydee` (no `Cyndee` duplicate), so the "phantom row" issue didn't even exist in this run. The Cyndee errors are a cell-alignment problem in portrait orientation, not a naming collision. **REVERTED**.
+
+**Diagnoses during session**:
+1. **1345px stability confirmed**: Python probe ran 1344px 10/10 → zero crashes; 1345px 10/10 → zero crashes. Both produce compact output (28 rows, ~12s each). Revision to comment in code from "3×448 tile boundary" to empirical truth: the compact/verbose mode boundary is between 1345 and 1400, not between 1344 and 1345.
+2. **1400px crash rate confirmed**: Python probe 1400px → **6/10 crash** (40% rate), OK runs produce 222–244 garbage rows. Confirms 1344 is the correct ceiling.
+3. **Benchmark instability discovered**: Running the full 5-image benchmark consistently crashed IM(3) even with `MaxGlmOcrHeight = 1344`. Single-image IM(3) runs succeeded. Root cause: after processing IM(1) and IM(2), GPU/Ollama state changes such that IM(3) enters a "crash mode" where it generates enough tokens to fill the 32768-token context, triggering the KV-cache shift assertion.
+
+**Crash hardening — keep_alive=0**:
+Added `keep_alive = 0` to request body — forces model unload after each image. Reduced crash frequency but did **not** fully eliminate it: 1/3 full-benchmark runs still crashed. Root cause: the crash is non-deterministic; sometimes even a freshly loaded model enters verbose mode for IM(3).
+
+**Crash hardening — num_predict=20000 (COMMITTED)**:
+Added `num_predict = 20000` to options. The MRoPE assertion fires at KV-cache step 32,769 (first shift). A valid verbose output for IM(3) uses ~9,326 tokens. Setting `num_predict = 20000` allows all valid output to complete (2× safety margin over 9,326) while preventing any run from reaching step 32,769. Tested 3/3 consecutive full-benchmark runs — **zero crashes**. Score stable at **402/434 (92.6%)**.
+
+**Final state**: `keep_alive=0` + `num_predict=20000` both committed. The benchmark is now deterministically reliable rather than ~33% crash rate on IM(3).
+
+| Image | Score | Notes |
+|-------|-------|-------|
+| IM(1) | 74/77 | Unchanged |
+| IM(2) | 90/91 | Unchanged |
+| IM(3) | 64/84 | Stable (no more crashes) |
+| IM(4) | 86/91 | Unchanged |
+| IM(5) | 88/91 | Unchanged |

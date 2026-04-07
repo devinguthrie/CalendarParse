@@ -58,6 +58,10 @@ public class BubbleState
     {
         if (TimeState is TimeState.Pending or TimeState.Editing)
             TimeState = TimeState.Confirmed;
+
+        // Skip the review-only "Pending" step — go straight to interactive edit.
+        if (PositionState == PositionState.Pending)
+            PositionState = PositionState.Editing;
     }
 
     /// <summary>Thumbs down / edit icon: open the text editor.</summary>

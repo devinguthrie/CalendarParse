@@ -1,119 +1,94 @@
 # CalendarParse — Next Session Plan
 
-_Last updated: 2026-04-27 (session 22)_
+> **This file is forward-looking only.**
+> - Session summaries and experiment narratives belong in `experiment-log.md` — do NOT duplicate them here.
+> - After every session: update **Current State** in-place, update **Remaining Errors** in-place, add new anti-patterns, update Research Pipeline status. That is all.
+> - Do NOT add "Session N — what happened" sections here.
+
+_Last updated: session 29_
 
 ## Current State
 
 | Metric | Value |
 |--------|-------|
-| **Best score (hybrid)** | **394/434 (90.8%)** — qwen2.5vl:7b + WinRT OCR, **no --known-names required** |
+| **Best score** | **402/434 (92.6%)** — `glm-ocr` model via Ollama, `--glm-ocr` flag |
+| Previous best | 394/434 (90.8%) — qwen2.5vl:7b + WinRT OCR hybrid |
 | Test set | 5 images, 434 shifts: IM(1)=77, IM(2)=91, IM(3)=84, IM(4)=91, IM(5)=91 |
-| Active hybrid pipeline | `HybridCalendarService.cs` — OCR first → fragments to LLM → session pool → per-day strip LLM → OCR name supplement → holiday heuristic |
-| Vision pipeline | `OllamaCalendarService.cs` P20 — **DO NOT MODIFY** |
+| Per-image (glm-ocr) | IM(1)=74/77 (96%), IM(2)=90/91 (99%), IM(3)=64/84 (76%), IM(4)=86/91 (95%), IM(5)=88/91 (97%) |
+| GLM-OCR pipeline | `GlmOcrCalendarService.cs` — one full-image HTML OCR call, HTML table parser, majority-vote date anchoring, sliding window for 1-cell holiday cols |
+| Hybrid pipeline | `HybridCalendarService.cs` — still available via `--model qwen2.5vl:7b` |
+| Frozen file | `OllamaCalendarService.cs` P20 — **DO NOT MODIFY** |
 | Temperature | 0.0 (deterministic) |
-| Known names | **Not required** — names discovered dynamically at runtime |
+| GLM-OCR ctx size | 32768 — portrait images auto-resized to ≤1344px height (`ResizeForGlmOcrIfNeeded`, Emgu.CV). [Ollama #14171](https://github.com/ollama/ollama/issues/14171) (open — M-RoPE assertion in multi-tile path); remove workaround when fixed. |
+| GLM-OCR crash hardening | `keep_alive=0` + `num_predict=20000` in every request. KV-cache shift assertion fires at step 32,769; valid verbose output is ~9,326 tokens; 20,000 cap prevents crash while allowing all valid output. 3/3 benchmark runs stable at 402/434. |
 
-### Session 22 — Engineering Review: Dead Code + Prompt Externalization (394/434, no change)
+## LLM Call Count Per Image
 
-| Attempt | Result | Outcome |
-|---------|--------|---------|
-| Remove dead flags/methods + externalize all prompts to prompts.json + PromptService | 394/434 (0) | COMMITTED — structural refactor, no score change |
-
-**Changes**: Removed `halvesMode`, `resizeWidth`, `ensembleModel` flags and helpers (`MergeCalendarResults`, `MergeBlankFill`) from Program.cs. Removed `ExtractAllShiftsCsvAsync` and `ExtractAllShiftsDualAsync` dead methods from OllamaCalendarService. Created `Prompts/prompts.json` (16 templates, embedded resource) and `PromptService` static class for lazy-loaded `{var}` substitution. All 12 inline LLM prompt strings migrated to PromptService in both HybridCalendarService and OllamaCalendarService.
-
-### Session 21 — Retail-Context Hint v3 (+17, 394/434 = 90.8%)
-
-| Attempt | Result | Outcome |
-|---------|--------|---------|
-| Retail hint v1/v2 in `OllamaCalendarService.ExtractColumnAsync` | 377/434 (0) | Dead code — that function not called by hybrid pipeline |
-| **Retail hint v3 in `HybridCalendarService.ExtractColumnFromImageAsync`** | **394/434 (+17)** | **COMMITTED** |
-
-Key diagnostic: hybrid pipeline calls `ExtractColumnFromImageAsync` (not `OllamaCalendarService.ExtractColumnAsync`). Hint placed at start of initial prompt and at start of `reinforcedPrompt` retry broke the model's Saturday=RTO prior.
-
-**Prior sessions** (result of Phases 56–62, all committed or reverted):
-- 5-image expansion (IM(4)/IM(5) added): 374/434 baseline
-- 8:xx contamination → narrow strip re-query: +3 (374→377/434)
-- Name parenthetical normalization: neutral
-- Phase 60 leading-RTO re-query: −5, reverted
-- Phase 62 ocrTimeMap holiday-guard: 0, reverted (dead code)
-
-### LLM Call Count Per Image
 10–17 calls per image:
 - Pass 1: header (1 call)
 - Pass 2: names from full image with OCR fragments (1 call)
 - Pass 3: one strip per day column (7 calls, some skipped if OCR pre-fills)
 - Pass 4: x-marks clarification (1 call, skipped for holiday-blanked columns)
-- Re-query: last-employee re-query fires when truncated or last-blank (up to 1/strip)
-- Re-query: penultimate re-query fires when duplicate-value anomaly detected (up to 1/strip)
+- Re-query: last-employee fires when truncated or last-blank (up to 1/strip)
+- Re-query: penultimate fires when duplicate-value anomaly detected (up to 1/strip)
 - Re-query: 8:xx narrow strip fires when ≥2 time-ranges start with "8:" (up to 1/strip)
 
-### Remaining Errors (57 total)
+## Remaining Errors (32 total, 402/434, glm-ocr pipeline)
 
-**IM(1) — 9 errors** (68/77):
-- Thu Oct30 cluster: 6 employees affected (Kyleigh, Brittney, Cyndee, Victor, Halle, Seena) — green highlighted Andee cell visual anchor causes row-swap
-- Kyleigh: 1 additional error (Oct28 x/shift swap)
-- Ciara: 1 blank (Nov01)
-- Jenny: 1 TIME-MISREAD (Oct26 Sun)
+**IM(1) — 3 errors** (74/77):
+- Sarah Oct29: got shift expected "x" — model misread
+- Jenny Oct26: 9:30-6:00 vs 9:30-6:30 — digit OCR difference
+- Kyleigh Oct28: 9:30-6:00 vs 9:30-2:00 — wrong shift end time
 
-**IM(2) — 13 errors** (78/91):
-- Athena: 7/7 MISSING — OCR finds zero tokens in her row; LLM non-deterministically finds "Athena(train)" visually (~50% of runs) → normalized to "Athena", but still non-deterministic; cannot be reliably fixed
-- Tori: 4 errors (TIME-MISREAD / x-swap)
-- Halle: 1 TIME-MISREAD
-- Ciara: 1 x/shift swap
+**IM(2) — 1 genuine error** (90/91):
+- Halle Nov28: got "12:00-4:30" expected "11:00-7:30" — model misread
+- (7 "Clara" EXTRA entries for Ciara misspelling — do NOT count against score)
+
+**IM(3) — 20 errors** (64/84):
+- Cyndee: 6 wrong shifts — GLM-OCR outputs "Cydee" row (correct) AND phantom "Cyndee" row (wrong); exact match picks wrong row
+- Megan: 4 wrong shifts — similar cell-assignment error in portrait orientation
+- Kyleigh: 3 shifted/swapped values (got x expected shift, got shift expected x)
+- Seena: 3 "xx" cells not read + 1 wrong shift
+- Franny: 2 errors (got shift expected x)
+- Brittney: 1 error (got shift expected x)
 
 **IM(4) — 5 errors** (86/91):
-- Mon Jul28: 3 errors — Andee/Brittney/Cyndee get "RTO" instead of time-ranges (leading-RTO fix tried and reverted −5)
-- Franny Jul31: 1 error (TIME-MISREAD, got "9:30-6:30" expected "9:30-6:00")
-- Victor Aug2: 1 error (got "x" expected "RTO")
+- Brittney Jul31: got shift expected "x"
+- Destiny Jul31: got "" expected "xx" — "xx" not read by model
+- Seena Jul30/Jul31/Aug1: got "" expected "xx" — "xx" not read by model
 
-**IM(5) — 12 errors** (79/91):
-- Jul26 Sat: still 7 errors — model now returns time-ranges from the retry but they are shift-time mismatches (Brittney 9:00-5:30 exp 9:30-6:00, Cyndee 9:30-6:00 exp 12:00-6:30, Sarah 12:00-8:30 exp 10:00-6:30, Franny 10:00-6:30 exp x, Victor got x exp RTO, Raul/Kyleigh may vary); partial improvement but time-range discrimination still imperfect
-- Jul24: 4 errors — model returns 1-row offset for first 4 employees (Andee x/9:30-6:00, Brittney 9:30-6:00/12:00-8:30, Cyndee 12:00-8:30/9:00-5:30, Sarah 9:00-5:30/x)
-- Victor Jul23: 1 error (got "10:00-2:30" expected "x")
+**IM(5) — 3 errors** (88/91):
+- Cyndee Jul26: 12:00-8:30 vs 12:00-6:30 — digit OCR difference
+- Kyleigh Jul21: 1:00-6:30 vs 1:00-3:30 — wrong shift end time
+- Kyleigh Jul25: got "x" expected "RTO" — x/RTO confusion
 
-### Hard Ceiling Analysis
+## Hard Ceiling Analysis (GLM-OCR pipeline)
 
-**IM(1) Thu Oct30 cluster (6 errors)**: `ComputeDayColBoundsFromOcr()` boundaries are geometrically correct. Cause: green highlighted Andee cell acts as visual anchor producing "10:00-6:30" × 3 for rows 2, 5, 8. At temp=0, all re-queries return the same wrong answer. **Irreducible with re-query approaches** — would require image color-masking or fine-tuning.
+| Error cluster | Count | Root cause | Fix path |
+|---|---|---|---|
+| IM(3) "xx" cells (Seena/Destiny) | 4 | Model doesn't read double-X marks as "xx" — outputs empty or wrong shift | Image preprocessing or fine-tuning |
+| IM(3) portrait orientation misreads (Cyndee, Megan, Kyleigh) | ~13 | GLM-OCR tile computation different for portrait; cell-alignment errors cause wrong shift values regardless of naming | Phantom dedup is NOT the fix — "Cydee" row itself has wrong shifts. Need better portrait resolution or different tiling. |
+| Digit precision diffs (IM(1) Jenny/Kyleigh, IM(5) Cyndee) | 3 | Model reads last digit incorrectly (6:00 vs 6:30, 6:30 vs 2:00) | Fine-tuning or image sharpening |
+| Brittney Jul31 / Sarah Oct29 x/shift confusion | 2 | Model reads shift where "x" is printed | Unknown |
 
-**IM(2) Athena (7 errors)**: OCR confirmed blind to her row — no fragments at all. LLM finds "Athena(train)" in roughly half of runs (normalized correctly now), but still non-deterministic. No reliable fix path without training data or image-level intervention.
+**Total remaining: 32 errors. Actual ceiling unclear — IM(3) errors are portrait cell-alignment, not naming; phantom dedup does not help.**
 
-**IM(4) Aug2 Sat (~9 errors) — CONFIRMED HARD CEILING (Session 20)**: Normal work day — most employees have time-range shifts. Model returns all-RTO for the Aug2 Sat column (same failure mode as IM(5) Jul26). Holiday detector **false-fires** → blanks all 13 → OCR salvage recovers only Sarah=RTO and Victor=RTO. Jenny/Halle score correctly via blank≡x. 9 employees with time-range shifts remain blank (wrong). **Diagnostic confirmed (Session 20)**: `ocrTimeMap has 0 time-range(s)` for all 7 day columns of IM(4). WinRT OCR reads IM(4) time cells as fragment tokens ("9:00" + "5:30" separately), never as compound "9:00-5:30" strings — so the ocrTimeMap discriminator has no signal. Same root cause as IM(5) Jul26. **No fixable path without image preprocessing or model fine-tuning.**
+## Next Steps (Priority Order)
 
-**IM(4) Mon Jul28 RTO (3 errors)**: Leading-RTO heuristic tried and failed (−5). Root cause is model contamination from hours sub-column, but the "first 3 employees all RTO" detection pattern fires equally on model misread errors in other columns.
-
-**IM(5) Jul26 (11 errors)**: Uniform-RTO fires on this column, then narrow strip retry produced no time-ranges, so holiday detector blanked the entire column. Most employees actually have time-ranges on Jul26. The holiday detection fired incorrectly. **CONFIRMED HARD CEILING (Session 19).**
-
-**Detailed analysis (Session 19):** The LLM returns 12/13 RTO + Seena "2:30-8:00" for the Sat column. Strict `allSame` fails on Seena's outlier, so neither the uniform-RTO re-query nor the holiday detector fires. Tried 80% majority mode check for both. Result: holiday detector fires → blanks all → OCR salvage recovers only 2 cells (Victor=RTO, Seena=RTO) → Jenny+Kyleigh become blank (wrong, were correct RTO before) → net −1. Narrow retry returns `[SAT, RTO, RTO, RTO, RTO, x, RTO, ...]` — Franny=x correct but Seena missing, rest RTO. WinRT OCR finds **zero time-range tokens** in the Sat column (ocrTimeMap unfilled for day 6), so OCR salvage cannot recover the actual shift values. **No path forward without retraining or image preprocessing.**
-
-**IM(5) Jul24 (4 errors)**: Clean 1-row offset for first 4 employees. Model reads row N+1 data for rows 1–4. No reliable detection heuristic identified without ground truth comparison.
-
-## Next Most-Promising Targets
-
-1. **IM(4) Mon Jul28 RTO ×3 (3 errors)**: Andee/Brittney/Cyndee get "RTO" for a normal Monday work day. May now be addressable via the narrow-strip fix (similar column structure to Sat); worth testing now that Sat is fixed.
-
-2. **IM(5) Jul24 row-offset (4 errors)**: Clean 1-row offset for first 4 employees (Andee, Brittney, Cyndee, Sarah). Model reads row N+1's data for rows 1–4. Potentially detectable/correctable.
-
-3. **IM(5) Jul26 Sat time-mismatches (7 errors)**: Retail hint fixed the all-blank failure, but model reads close-but-wrong times (e.g. "9:00-5:30" when expected "9:30-6:00"). May be a soft ceiling requiring image preprocessing for exact digit precision.
-
-4. **IM(2) Athena (7 errors)**: OCR blind to her row, LLM non-deterministically misses her. Hard ceiling — no reliable fix path.
-
-5. **IM(1) Thu Oct30 cluster (6 errors)**: Green highlighted Andee cell visual anchor. Hard ceiling at temp=0.
-
-~~**IM(4) Aug2 Sat**~~ — **RESOLVED Session 21 (+8)**: Retail hint v3 broke through the Saturday=RTO prior. 
-
-~~**IM(5) Jul26 all-blank**~~ — **RESOLVED Session 21 (+9, partial)**: Retry now returns time-ranges. Still 7 shift-time mismatch errors remain.
+1. **"xx" cells (4 errors, IM(3)/IM(4))**: Seena/Destiny show empty where "xx" is expected. Try hybrid fallback: if GLM-OCR cell is empty AND the corresponding WinRT OCR crop contains any "x" token, substitute "xx".
+2. **IM(3) portrait quality**: The 20 IM(3) errors are primarily wrong shift VALUES (cell alignment), not naming issues. Phantom dedup does not help — confirmed session 29. Only fix is Ollama bug resolution (full-res portrait) or a different tiling strategy.
+3. **Ollama bug revert (future)**: When [Ollama #14171](https://github.com/ollama/ollama/issues/14171) (open — M-RoPE assertion in multi-tile path) is fixed, remove `ResizeForGlmOcrIfNeeded` and test full-resolution portrait. Expected: IM(3) may improve significantly at native resolution.
+4. **Remove keep_alive=0 + num_predict after #14171 fix**: Once the Ollama crash is patched upstream, test whether `keep_alive=0` and `num_predict=20000` can be removed without regressions.
 
 ## Anti-Patterns — Never Retry
 
+> **Scope**: Pipeline, prompt, and architecture mistakes that would hurt accuracy regardless of model or environment. Things someone could accidentally re-introduce while iterating. Model evaluations ("model X scored below baseline") do NOT belong here — those live in `experiment-log.md` and the Rejected Models table below.
+
 | Anti-pattern | Why |
 |---|---|
-| gemma3 (any size) | Year hallucination — architectural |
-| llava:13b, minicpm-v, granite3.2-vision:2b | 0% — wrong dates or all-x |
-| qwen2.5vl:32b (CPU offload) | −23 shifts, 75 min runtime |
 | Anchor-guided re-extraction | Overwrites correct values; −35 pts |
 | Pipe/CSV output format | Model copies example values |
 | `--resize` downscaling | Destroys digit legibility; −13 pts |
-| `--ensemble llama3.2-vision:11b` | Fills blanks with "x" not times |
 | CLAHE / grayscale / `current` preprocessing | Destroys red ink X-mark color signal |
 | Batched extraction (split employees) | Second batch all blank |
 | Two-shot self-anchoring (Q1→Q2) | Biases away from cell reading; −4 shifts |
@@ -133,46 +108,51 @@ Key diagnostic: hybrid pipeline calls `ExtractColumnFromImageAsync` (not `Ollama
 | CSV output for row passes | Parse errors cascade; −39 shifts |
 | Drift detector threshold=1 | Fires on normal schedules; −8 pts |
 | Pass 2b (name column strip LLM crop) | LLM hallucinates variant names; zero net benefit even with edit-distance filter |
-| Leading-RTO re-query (first 3 all RTO/PTO) | −5; model erroneously returns RTO for first 3 on legitimate columns — pattern indistinguishable from contamination |
-| 80% majority holiday/uniform-RTO check (replacing strict allSame) | IM(4) Aug2 already fires with strict check (model returns all-RTO, holiday detector false-fires); adding majority check additionally fires on IM(5) Jul26 → blanks Jenny+Kyleigh (correct RTO, were already correct before) → net −1. OCR salvage can't recover time-ranges from Jul26 Sat column (zero tokens found). |
-| ocrTimeMap holiday-guard (skip holiday blank when ocrTimeMap ≥1 time-range in column) | IM(4) ocrTimeMap = 0 for ALL 7 columns. WinRT reads time cells as separate fragments ("9:00", "5:30") not compound strings — TimeRangeRegex never matches. Guard is dead code for this dataset. IM(4) Aug2 and IM(5) Jul26 are both hard ceilings for the same reason. |
-| Retail hint in `OllamaCalendarService.ExtractColumnAsync` | Dead code — that function is never called by the hybrid pipeline. `HybridCalendarService.ExtractColumnFromImageAsync` is the real call site. Injecting hints there (with `isWeekendCol` condition) works correctly. |
+| Leading-RTO re-query (first 3 all RTO/PTO) | −5; fires on legitimate columns — pattern indistinguishable from contamination |
+| 80% majority holiday/uniform-RTO check | Blanks Jenny+Kyleigh (correct RTO); OCR salvage recovers only 2/13 cells; net −1 |
+| Levenshtein ≤ 2 phantom employee dedup | `Andee` and `Cyndee` are distance 2 (both end in `-dee`); dedup incorrectly drops `Cyndee` as a phantom of `Andee`. IM(3) phantom row is non-deterministic; "Cydee" row itself has wrong shifts when it appears alone. Net: −22 on other images, 0 on IM(3). |
+| ocrTimeMap holiday-guard | IM(4) ocrTimeMap = 0 for all 7 columns — WinRT reads time cells as fragments; dead code |
+| Retail hint in `OllamaCalendarService.ExtractColumnAsync` | Dead code — hybrid pipeline calls `HybridCalendarService.ExtractColumnFromImageAsync`, not this |
+
+## Rejected Models — Do Not Retest
+
+> Models confirmed below baseline. Full details in `experiment-log.md`. Do not re-run these.
+
+| Model | Best score | Why rejected |
+|---|---|---|
+| gemma3 (any size) | — | Year hallucination — architectural |
+| accounts/fireworks/models/glm-5 | 117/434 (27.0%) | Text-only — no vision; 0 employees per image; do not retest |
+| accounts/fireworks/models/qwen3p6-plus | 117/434 (27.0%) | Text-only — no vision; 0 employees per image; do not retest |
+| accounts/fireworks/models/qwen3-vl-30b-a3b-thinking | 212/434 (48.8%) | Vision works but thinking chain burns tokens; only 2/7 day strips extracted; 4× slower than qwen2.5vl:7b |
+| llava:13b, minicpm-v, granite3.2-vision:2b | ~0% | Wrong dates or all-x output |
+| qwen2.5vl:32b (CPU offload) | −23 shifts | 75 min runtime, accuracy worse than 7b |
+| llama3.2-vision:11b (ensemble) | — | Fills blanks with "x" not times; corrupts ensemble |
+| Fireworks qwen3-vl-30b-a3b-instruct | 329/434 (75.8%) | General MoE arch, not a visual table reader; row-disambiguation failures; rate limits on serverless |
+| Kimi K2.5 (`kimi-k2p5`) | — | Reasoning chain leaks into names JSON array; all downstream passes corrupted |
+| qwen2p5-vl-72b via Fireworks serverless | — | Returns empty responses on serverless; on-demand only at $10/hr |
 
 ## Quick Reference Commands
 
 ```powershell
-# Standard test — no --known-names needed (90.8%)
+# GLM-OCR (new best: 92.6%)
+dotnet run --project CalendarParse.Cli --no-build -- "CalendarParse\calander-parse-test-imgs" --glm-ocr --test --model glm-ocr 2>&1 | Tee-Object glm-ocr-benchmark.txt
+
+# GLM-OCR score only
+dotnet run --project CalendarParse.Cli --no-build -- "CalendarParse\calander-parse-test-imgs" --glm-ocr --test --model glm-ocr 2>&1 | Select-String "Overall|IM \("
+
+# Hybrid pipeline (qwen2.5vl:7b, 90.8%)
 dotnet run --project CalendarParse.Cli --no-build -- "CalendarParse\calander-parse-test-imgs" --test --model qwen2.5vl:7b 2>&1 | Tee-Object hybrid-run-output.txt
 
-# Score only (quick check)
-dotnet run --project CalendarParse.Cli --no-build -- "CalendarParse\calander-parse-test-imgs" --test --model qwen2.5vl:7b 2>&1 | Select-String "Overall|IM \("
-
-# Single image test (faster iteration)
-dotnet run --project CalendarParse.Cli --no-build -- "tmp-im5" --test --model qwen2.5vl:7b
-
-# Benchmark loop (meta-agent improvement)
-.\benchmark-loop.ps1 -MaxIterations 20 -TargetScore 400
-
-# Dry-run first to verify meta-agent proposal quality
-.\benchmark-loop.ps1 -DryRun
+# Single image test (GLM-OCR, faster iteration)
+dotnet run --project CalendarParse.Cli --no-build -- "CalendarParse\calander-parse-test-imgs\IM (2).jpg" --glm-ocr --test
 ```
 
-## Next Steps (Priority Order)
+## Research Pipeline
 
-1. **Ciara Nov01 blank (1 error)** — re-query fires correctly but returns "9:30-2:00" instead of "12:00-5:30"; strip crop for that column may need to be expanded downward by a few pixels so the bottom row is fully visible
-2. **Tori misreads (3 errors, IM(2))** — TIME-MISREAD / x-swap; Tori is sensitive to main strip prompt changes; targeted re-query approaches safer
-3. **Jenny Oct26 TIME-MISREAD (1 error)** — got "10:30-6:00" expected "9:30-6:30"; individual digit confusion on Sun strip
-4. **Kyleigh Oct28 x/shift swap (1 error)** — individual x↔shift confusion
-5. **Update benchmark-loop.ps1 system prompt** — currently produces only malformed proposals (12/12 failures); update with current 22-error taxonomy, corrected Thu Oct30 root cause (highlighted cell, not column boundary), and guidance on exact-match search strings
-6. **Thu Oct30 cluster (6 errors)** — ~~column boundary bug~~ (**confirmed irreducible with re-query**); visual anchor (green highlighted Andee cell) cannot be overcome at temp=0; would require image color-masking preprocessing or fine-tuning; defer unless more training data available
-7. **OCR pre-fill (deferred)** — blocked until all employees have reliable Y anchors; do not attempt until `nameToYEarly` is populated for all 11 IM(1) employees
+Ideas not yet tried. Add new entries here; move to experiment-log.md once tested.
 
-
-## From Research 
-
-1. zai-org/GLM-OCR — a brand-new 0.9B model from Z.ai — just hit #1 on OmniDocBench V1.5 (94.62 score), specifically excelling at complex tables, grids, code blocks, and varied layouts. It runs on 1.5GB VRAM (sub-1GB quantized), deploys via Ollama in one command, and outputs structured JSON directly. This is the most directly relevant new release for CalendarParse — work schedules are essentially grid documents, and GLM-OCR's two-stage layout+OCR pipeline was designed exactly for this.
-Quick test: ollama pull glm-ocr → feed it a work schedule image → see if it returns usable structured output before writing any custom parsing logic.
-2. Qwen3-VL (GitHub) dropped in late 2025 and is now the strongest open-source VLM family available. The 235B MoE variant rivals GPT-5 and Gemini 2.5 Pro; the 7B/8B models are very capable and runnable locally via Ollama. Strong structured JSON extraction from documents.
-3. Qwen2.5-VL (ArXiv) remains the most battle-tested option for form/table extraction. The document parsing docs are thorough. A fine-tune of the 7B on W2 forms is a useful reference: chrisalehman/ai-document-extraction.
-4. Industry pattern shift: Companies are replacing OCR+rules with single-step VLM pipelines. The key technique — include a JSON schema in the prompt — is reporting ~100% structural consistency in production. If CalendarParse isn't already doing this, it's the single highest-leverage change to try.
-5. Microsoft Table Transformer (GitHub) received updates through May 2025. Still the go-to if you need a dedicated, lightweight table detection model rather than a full VLM.
+| Idea | Hypothesis |
+|------|------------|
+| **qwen2.5-vl fine-tune (chrisalehman/ai-document-extraction)** | Fine-tuned on W2 forms for table→JSON — closer to CalendarParse use case than base model. |
+| **Image preprocessing (sharpen + contrast)** | Image quality may be the main bottleneck for time-misread errors. Risk: may affect red-ink X-mark color signal. |
+| **rolm-ocr for Athena row detection** | OCR-dedicated model; outputs markdown table. **Serverless not supported on Fireworks — on-demand deployment only (dedicated GPU required, same blocker as qwen2p5-vl-72b).** Confirmed blocked as of 2026-04-06. |
