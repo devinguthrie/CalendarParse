@@ -206,11 +206,13 @@ public class OverlayVisibilityTests
     }
 
     [Fact]
-    public void ShouldDrawCanvasBorder_ReturnsTrue_ForSelectedBubble_WhenOptIn_DuringTimeStep()
+    public void ShouldDrawCanvasBorder_ReturnsFalse_ForSelectedBubble_WhenOptIn_DuringTimeStep()
     {
-        // Selected + time-pending = still on the time-confirm step → canvas border shown.
+        // When positionOptIn=true, PositionTargetRect is the visual indicator across ALL steps
+        // (including time-confirm).  Drawing a canvas border here would produce two simultaneous
+        // overlays on the same bubble — so this must return false.
         var state = PendingTimeState();  // PositionState.Pending, TimeState.Pending
-        Assert.True(OverlayVisibilityLogic.ShouldDrawCanvasBorder(
+        Assert.False(OverlayVisibilityLogic.ShouldDrawCanvasBorder(
             positionOptIn: true, state, isSelected: true));
     }
 

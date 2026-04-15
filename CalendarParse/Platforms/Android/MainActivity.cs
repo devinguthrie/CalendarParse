@@ -4,6 +4,7 @@ using Android.Content.PM;
 using Android.OS;
 using CalendarParse.Pages;
 using CalendarParse.Platforms.Android;
+using Sentry;
 
 namespace CalendarParse
 {
@@ -21,9 +22,27 @@ namespace CalendarParse
         Label       = "CalendarParse — process schedule")]
     public class MainActivity : MauiAppCompatActivity
     {
+        // Action strings and extras for the notification-monitor image flow.
+        // Used by ScheduleImageActionReceiver (broadcast) and OnNewIntent (activity).
+        internal const string ActionAutoProcessMonitorImage = "calendarparse.action.AUTO_PROCESS_MONITOR";
+        internal const string ActionLoadMonitorImage        = "calendarparse.action.LOAD_MONITOR";
+        internal const string ExtraMonitorImagePath         = "calendarparse.extra.MONITOR_IMAGE_PATH";
+
         protected override void OnCreate(Bundle? savedInstanceState)
         {
-            base.OnCreate(savedInstanceState);
+            // Pass null to discard Android's saved Fragment back stack.
+            // MAUI pages created with `new` (non-DI) leave stale fragments in the back
+            // stack whose MauiContext service provider is disposed after Activity recreation,
+            // causing a fatal ObjectDisposedException on relaunch.
+            base.OnCreate(null);
+
+            // Capture any unhandled Java/Android exceptions that survive the .NET layer.
+            Android.Runtime.AndroidEnvironment.UnhandledExceptionRaiser += (_, args) =>
+            {
+                SentrySdk.CaptureException(args.Exception);
+                SentrySdk.Flush(TimeSpan.FromSeconds(2));
+            };
+
             CreateNotificationChannels();
             HandleShareIntent(Intent);
         }
@@ -53,12 +72,71 @@ namespace CalendarParse
                 global::Android.App.NotificationImportance.High);
             ready.Description = "Fires when a schedule is ready to review";
             mgr.CreateNotificationChannel(ready);
+
+            // High-importance prompt shown when the notification monitor detects a schedule image
+            var detectedName = new global::Java.Lang.String("Schedule Detected");
+            var detected = new global::Android.App.NotificationChannel(
+                "CalendarParse_ScheduleDetected",
+                detectedName,
+                global::Android.App.NotificationImportance.High);
+            detected.Description = "Asks whether to process a schedule image received in a monitored chat";
+            mgr.CreateNotificationChannel(detected);
         }
 
         protected override void OnNewIntent(Intent? intent)
         {
             base.OnNewIntent(intent);
             HandleShareIntent(intent);
+            HandleMonitorIntent(intent);
+        }
+
+        private void HandleMonitorIntent(Intent? intent)
+        {
+            if (intent is null) return;
+            var action = intent.Action;
+            if (action != ActionAutoProcessMonitorImage && action != ActionLoadMonitorImage) return;
+
+            var path = intent.GetStringExtra(ExtraMonitorImagePath);
+            if (string.IsNullOrEmpty(path)) return;
+
+            bool autoProcess = action == ActionAutoProcessMonitorImage;
+            System.Diagnostics.Debug.WriteLine(
+                $"[MainActivity] HandleMonitorIntent autoProcess={autoProcess} path='{path}'");
+            _ = LoadMonitorImageIntoMainPageAsync(path, autoProcess);
+        }
+
+        private async Task LoadMonitorImageIntoMainPageAsync(string path, bool autoProcess)
+        {
+            try
+            {
+                byte[]? bytes = null;
+                if (File.Exists(path))
+                {
+                    bytes = await File.ReadAllBytesAsync(path);
+                    File.Delete(path); // consumed — clean up
+                }
+
+                if (bytes is null || bytes.Length == 0)
+                {
+                    System.Diagnostics.Debug.WriteLine("[MainActivity] Monitor image file missing or empty");
+                    return;
+                }
+
+                await MainThread.InvokeOnMainThreadAsync(async () =>
+                {
+                    if (Shell.Current is { } shell)
+                        await shell.GoToAsync("//MainPage");
+
+                    var services = IPlatformApplication.Current!.Services;
+                    var mainPage = services.GetRequiredService<MainPage>();
+                    await mainPage.LoadMonitorImageAsync(bytes, autoProcess);
+                });
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[MainActivity] LoadMonitorImageIntoMainPageAsync failed: {ex.Message}");
+            }
         }
 
         private void HandleShareIntent(Intent? intent)

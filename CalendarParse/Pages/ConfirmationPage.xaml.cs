@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using CalendarParse.Core.Models;
 using CalendarParse.Core.Services;
 using CalendarParse.Data;
 using CalendarParse.Models;
@@ -7,24 +7,6 @@ using CalendarParse.ViewModels;
 using Microsoft.Maui.Graphics;
 
 namespace CalendarParse.Pages;
-
-// ── Persistence DTO ───────────────────────────────────────────────────────────
-
-/// <summary>
-/// Serialized state of one bubble — written to ScheduleRun.ShiftsJson after each
-/// confirmation action so the session can be resumed exactly where it was left off.
-/// </summary>
-file record BubblePersist(
-    string Employee,
-    string Date,
-    string OriginalTimeRange,
-    string DisplayTime,
-    int    TimeState,       // 0=Pending 1=Editing 2=Confirmed
-    int    PositionState,   // 0=Pending 1=Confirmed 2=Skipped 3=Editing
-    int?   BoundsX,
-    int?   BoundsY,
-    int?   BoundsWidth,
-    int?   BoundsHeight);
 
 // ── View model ────────────────────────────────────────────────────────────────
 
@@ -70,6 +52,9 @@ public partial class ConfirmationPage : ContentPage
 
     // ── Drag rect state ───────────────────────────────────────────────────────
 
+    private bool  _dateConfirmedForThisRun   = false;
+    private bool  _crossTwelveStartIsPm      = false;  // default: cross-12 → start AM, end PM
+    private bool  _crossTwelvePreferenceSet  = false;
     private bool  _panLocked  = false;
     private bool  _zoomLocked = false;
     private bool  _positionOptIn = false;
@@ -84,18 +69,19 @@ public partial class ConfirmationPage : ContentPage
     private int?          _confirmedRowY;      // Y locked to first position confirmation; only X advances between bubbles
     private double?       _confirmedScrollY;   // viewport scrollY at first confirmation — reused so Y never drifts
     private double?       _pendingMarkerCX;    // image-px X under marker center captured on drag-start; held for entire gesture
+    private double?       _pendingMarkerCY;    // image-px Y under marker center captured on drag-start; held for entire gesture
     private double?       _lockedCX;           // same value, persists after gesture for diagnostic display
+    private double?       _lockedCY;           // same value, persists after gesture for diagnostic display
     private bool          _zoomGestureActive;  // true while user is actively dragging the zoom slider
     private readonly List<(int Index, int ImageX)> _confirmedPositions = [];
     private int   _currentBubbleIndex = -1;
     private double _intendedScrollX;  // last scroll X we commanded — used for zoom captures to avoid stale ScrollX reads
     private double _lastScrollY;
+    private double _imagePad;         // ExtraPad when zoom is active; 0 at rest (set by ApplyZoomScale/reset)
 
-    private const float MinZoomScale = 1f;
-    private const float MaxZoomScale = 4f;
-
-    private static readonly JsonSerializerOptions _json =
-        new() { PropertyNameCaseInsensitive = true };
+    private const float  MinZoomScale = 1f;
+    private const double ExtraPad     = 100; // blank canvas space around image to allow panning past edge
+    private const float MaxZoomScale = 10f;
 
     // ── Entry points ──────────────────────────────────────────────────────────
 
@@ -159,6 +145,7 @@ public partial class ConfirmationPage : ContentPage
             $"[StartResumeAsync] runId={runId} shiftsJson len={run.ShiftsJson?.Length ?? 0} " +
             $"bubbles={_bubbles.Count} imageW={_naturalImageWidth}");
 
+        _dateConfirmedForThisRun = false;
         RenderOverlay();
     }
 
@@ -174,13 +161,13 @@ public partial class ConfirmationPage : ContentPage
 
     private void SetPanel(Panel panel)
     {
-        LoadingPanel.IsVisible     = panel == Panel.Loading;
-        SharePromptPanel.IsVisible = panel == Panel.SharePrompt;
-        SubmittedPanel.IsVisible   = panel == Panel.Submitted;
-        OverlayPanel.IsVisible     = panel == Panel.Overlay;
-        ErrorPanel.IsVisible       = panel == Panel.Error;
-        BottomBar.IsVisible        = panel == Panel.Overlay;
-        ProgressHeader.IsVisible   = panel == Panel.Overlay;
+        LoadingPanel.IsVisible      = panel == Panel.Loading;
+        SharePromptPanel.IsVisible  = panel == Panel.SharePrompt;
+        SubmittedPanel.IsVisible    = panel == Panel.Submitted;
+        OverlayPanel.IsVisible      = panel == Panel.Overlay;
+        ErrorPanel.IsVisible        = panel == Panel.Error;
+        BottomBar.IsVisible         = panel == Panel.Overlay;
+        ProgressHeader.IsVisible    = panel == Panel.Overlay;
     }
 
     // ── Processing flow ───────────────────────────────────────────────────────
@@ -245,7 +232,6 @@ public partial class ConfirmationPage : ContentPage
 
     private void RenderOverlay()
     {
-        SetPanel(Panel.Overlay);
         BubbleDetailPanel.IsVisible = false;
         LockPanBtn.IsVisible        = false;
         ZoomControlsPanel.IsVisible = false;
@@ -256,8 +242,8 @@ public partial class ConfirmationPage : ContentPage
         _baseImageSize              = Size.Zero;
         ImageScrollView.Orientation = ScrollOrientation.Both;
         DragOverlay.InputTransparent = true;
-        LockPanBtn.Text             = "🔓 Lock Pan";
-        ZoomHideBtn.Text            = "🙈";
+        LockPanBtn.Text             = "Lock Pan";
+        ZoomHideBtn.Text               = MaterialGlyphs.Visibility;
         LockPanBtn.Background  = BackgroundFromResource("Gray300");
         ZoomHideBtn.Background = BackgroundFromResource("Gray300");
         ZoomSlider.Value            = 1;
@@ -271,8 +257,12 @@ public partial class ConfirmationPage : ContentPage
         _lockedCX                   = null;
         _zoomGestureActive          = false;
         _confirmedPositions.Clear();
-        ImageContainer.WidthRequest = -1;
+        ImageContainer.WidthRequest  = -1;
         ImageContainer.HeightRequest = -1;
+        ScrollContent.Padding        = new Thickness(0);
+        ScrollContent.WidthRequest   = -1;
+        ScrollContent.HeightRequest  = -1;
+        _imagePad                    = 0;
         _currentBubbleIndex         = -1;
         ValidationLabel.IsVisible    = false;
         EditPositionBtn.IsVisible    = false;
@@ -280,9 +270,86 @@ public partial class ConfirmationPage : ContentPage
 
         ScheduleImage.SizeChanged += OnImageSizeChanged;
 
+        // Show date confirmation in the bottom card so the user can see the schedule.
+        if (!_dateConfirmedForThisRun && _bubbles.Count > 0)
+        {
+            var firstDate = DateTime.TryParse(_bubbles[0].Shift.Date, out var d) ? d : DateTime.Today;
+            DateConfirmPicker.Date       = firstDate;
+            DateConfirmDateLabel.Text    = firstDate.ToString("dddd, MMMM d");
+            DatePickerActions.IsVisible  = false;
+            DateConfirmPicker.IsVisible  = false;
+            DateConfirmOkBtn.IsVisible   = true;
+            DateConfirmEditBtn.IsVisible = true;
+            DateConfirmView.IsVisible    = true;
+            // Hide normal bubble content so only the date confirm UI shows in the card.
+            BubbleDateLabel.IsVisible    = false;
+            BubbleTimeLabel.IsVisible    = false;
+            NormalActions.IsVisible      = false;
+            EditActions.IsVisible        = false;
+            PositionEditActions.IsVisible = false;
+            ZoomControlsPanel.IsVisible  = true;
+            ZoomSliderWrapper.IsVisible  = true;
+            BubbleDetailPanel.IsVisible  = true;
+            SetPanel(Panel.Overlay);
+            return;
+        }
+
+        SetPanel(Panel.Overlay);
         var first = _bubbles.FirstOrDefault(b => !b.IsFullyConfirmed);
         if (first is not null)
             OnBubbleTapped(first);
+    }
+
+    // ── Date confirmation handlers ──────────────────────────────────────────────
+
+    private void OnDateConfirmOkClicked(object? sender, EventArgs e)
+    {
+        _dateConfirmedForThisRun  = true;
+        DateConfirmView.IsVisible = false;
+        SetPanel(Panel.Overlay);
+        var first = _bubbles.FirstOrDefault(b => !b.IsFullyConfirmed);
+        if (first is not null)
+            OnBubbleTapped(first);
+    }
+
+    private void OnDateConfirmEditClicked(object? sender, EventArgs e)
+    {
+        DateConfirmPicker.IsVisible  = true;
+        DatePickerActions.IsVisible  = true;
+        DateConfirmOkBtn.IsVisible   = false;
+        DateConfirmEditBtn.IsVisible = false;
+    }
+
+    private void OnDateConfirmSaveClicked(object? sender, EventArgs e)
+    {
+        if (_bubbles.Count == 0) return;
+        if (DateTime.TryParse(_bubbles[0].Shift.Date, out var originalFirst))
+        {
+            var delta = ((DateConfirmPicker.Date ?? DateTime.Today).Date - originalFirst.Date).Days;
+            if (delta != 0)
+            {
+                foreach (var bubble in _bubbles)
+                {
+                    if (DateTime.TryParse(bubble.Shift.Date, out var old))
+                        bubble.Shift.Date = old.AddDays(delta).ToString("yyyy-MM-dd");
+                }
+                if (_runId >= 0)
+                    _ = PersistProgressAsync();
+            }
+        }
+        DateConfirmDateLabel.Text    = (DateConfirmPicker.Date ?? DateTime.Today).ToString("dddd, MMMM d");
+        DatePickerActions.IsVisible  = false;
+        DateConfirmPicker.IsVisible  = false;
+        DateConfirmOkBtn.IsVisible   = true;
+        DateConfirmEditBtn.IsVisible = true;
+    }
+
+    private void OnDateConfirmCancelClicked(object? sender, EventArgs e)
+    {
+        DatePickerActions.IsVisible  = false;
+        DateConfirmPicker.IsVisible  = false;
+        DateConfirmOkBtn.IsVisible   = true;
+        DateConfirmEditBtn.IsVisible = true;
     }
 
     private void OnImageSizeChanged(object? sender, EventArgs e)
@@ -297,6 +364,11 @@ public partial class ConfirmationPage : ContentPage
         // Keep current drag rect anchored; do not reinitialize on layout changes.
         if (_selected is not null)
             UpdateDragRect();
+
+        // Re-draw the position target rect now that _renderedImageSize is valid.
+        // ShowPositionTargetRect guards against pre-layout calls (_renderedImageSize.Width <= 0),
+        // so this is the call that actually places the rect with correct viewport dimensions.
+        UpdateOverlayEditVisualState();
 
         // Apply zoom X-lock scroll AFTER layout has committed the new content size.
         // _pendingMarkerCX is an image-pixel column captured pre-zoom; we recompute the
@@ -318,7 +390,7 @@ public partial class ConfirmationPage : ContentPage
             System.Diagnostics.Debug.WriteLine($"[SIZE-APPLY]   imgCX={imgCX:F1} sx={sx:F4} ox={ox:F1} viewW={ImageScrollView.Width:F1} => scrollX={Math.Max(0, imgCX * sx + ox - ImageScrollView.Width / 2.0):F1}");
             if (sx > 0 && ImageScrollView.Width > 0)
             {
-                var newScrollX = ZoomScrollMath.ComputeScrollXForMarkerColumn(imgCX, sx, ox, ImageScrollView.Width);
+                var newScrollX = ZoomScrollMath.ComputeScrollXForMarkerColumn(imgCX, sx, ox, ImageScrollView.Width) + _imagePad;
                 var capturedScrollY = ImageScrollView.ScrollY;
                 _intendedScrollX = newScrollX;  // update intention BEFORE dispatch so next capture sees it
                 Dispatcher.Dispatch(() => _ = ImageScrollView.ScrollToAsync(newScrollX, capturedScrollY, false));
@@ -395,19 +467,21 @@ public partial class ConfirmationPage : ContentPage
         _selected = bubble;
 
         // Reset card to normal state whenever a new bubble is selected.
-        BubbleEmployeeLabel.IsVisible = true;
         BubbleDateLabel.IsVisible     = true;
+        DateConfirmView.IsVisible     = false;
         PositionEditActions.IsVisible = false;
         NormalActions.IsVisible       = true;
 
-        BubbleEmployeeLabel.Text = bubble.Shift.Employee;
-        BubbleDateLabel.Text     = bubble.Shift.Date;
+        BubbleDateLabel.Text     = FormatShiftDate(bubble.Shift.Date);
 
         // Time display: read-only label, editing entry hidden by default
         var timeText = bubble.DisplayTime;
-        BubbleTimeLabel.Text    = string.IsNullOrWhiteSpace(timeText) ? "No schedule found" : timeText;
+        BubbleTimeLabel.Text      = string.IsNullOrWhiteSpace(timeText) ? "No schedule found" : timeText;
         BubbleTimeLabel.IsVisible  = bubble.State.TimeState != TimeState.Editing;
-        BubbleTimeEntry.IsVisible  = bubble.State.TimeState == TimeState.Editing;
+        BubbleTimeEntry.IsVisible  = false;  // always hidden; revealed by "Other" in EditActions
+        TimePickerPanel.IsVisible  = bubble.State.TimeState == TimeState.Editing;
+        if (bubble.State.TimeState == TimeState.Editing)
+            SeedTimePickers(bubble.State.DisplayTime);
         BubbleTimeEntry.Text       = timeText;
 
         var needsPositionConfirm = IsLocationReviewOrEditStep(bubble);
@@ -415,39 +489,57 @@ public partial class ConfirmationPage : ContentPage
         ThumbsUpBtn.IsVisible    = bubble.State.TimeState != TimeState.Confirmed || needsPositionConfirm;
         ThumbsDownBtn.IsVisible  = bubble.State.TimeState != TimeState.Editing;
         ThumbsDownBtn.Text       = needsPositionConfirm
-            ? "📍 Edit Position"
-            : (isFullyConfirmed ? "✏️ Edit Time" : "✏️ Edit");
+            ? "Edit Position"
+            : (isFullyConfirmed ? "Edit Time" : "Edit");
         EditActions.IsVisible    = bubble.State.TimeState == TimeState.Editing;
         EditPositionBtn.IsVisible = _positionOptIn && isFullyConfirmed;
 
         ThumbsUpBtn.Text = bubble.State.TimeState != TimeState.Confirmed
-            ? "👍 Confirm Time"
-            : (needsPositionConfirm ? "📍 Confirm Location" : "👍 Confirm");
+            ? "Confirm Time"
+            : (needsPositionConfirm ? "Confirm Location" : "Confirm");
 
         BubbleDetailPanel.IsVisible = true;
         BubbleCanvas.Invalidate();
 
-        // Drag rect removed — user scrolls the image under the fixed PositionTargetRect.
+        // Single overlay state: target rect + zoom slider always visible when position opt-in is on.
         if (_positionOptIn)
         {
-            DragOverlay.IsVisible       = false;
-            LockPanBtn.IsVisible        = false;
-            ZoomControlsPanel.IsVisible = false;
+            DragOverlay.IsVisible = false;
+            LockPanBtn.IsVisible  = false;
             if (bubble.State.PositionState == PositionState.Editing)
+            {
                 EnterLocationEditMode();
+            }
             else
+            {
+                ZoomControlsPanel.IsVisible = true;
+                ZoomSliderWrapper.IsVisible = true;
+                ZoomSlider.IsVisible        = true;
+                ZoomSlider.IsEnabled        = true;
                 UpdateOverlayEditVisualState();
+            }
         }
         else
         {
-            PositionTargetRect.IsVisible = false;
+            PositionTargetRect.IsVisible  = false;
+            PositionTargetLabel.IsVisible = false;
             PositionDebugLabel.IsVisible  = false;
-            DragOverlay.IsVisible        = false;
-            LockPanBtn.IsVisible         = false;
-            ZoomControlsPanel.IsVisible  = false;
+            DragOverlay.IsVisible         = false;
+            LockPanBtn.IsVisible          = false;
+            ZoomControlsPanel.IsVisible   = true;
+            ZoomSliderWrapper.IsVisible   = true;
+            ZoomSlider.IsVisible          = true;
+            ZoomSlider.IsEnabled          = true;
         }
 
         UpdateHeaderProgress();
+
+        // Auto-scroll and zoom to center the selected bubble — same behavior as the location
+        // edit step, now applied during the time confirmation step too (Bug 5).
+        // EnterLocationEditMode handles this internally, so skip it to avoid a redundant scroll.
+        // When position opt-in is active use anchor-based interpolation (not raw server ScreenBounds).
+        if (bubble.State.PositionState != PositionState.Editing)
+            _ = ScrollToBubbleAsync(bubble, useInterpolation: _positionOptIn);
     }
 
     private void OnThumbsUpClicked(object? sender, EventArgs e)
@@ -499,24 +591,91 @@ public partial class ConfirmationPage : ContentPage
         }
 
         _selected.State.EditTime();
+        SeedTimePickers(_selected.State.DisplayTime);
         BubbleTimeLabel.IsVisible  = false;
-        BubbleTimeEntry.IsVisible  = true;
+        BubbleTimeEntry.IsVisible  = false;  // revealed by "Other" button
+        TimePickerPanel.IsVisible  = true;
         EditActions.IsVisible      = true;
         ThumbsDownBtn.IsVisible    = false;
-        BubbleTimeEntry.Focus();
+        NormalActions.IsVisible    = false;  // hide to prevent accidental EditPositionBtn tap
         BubbleCanvas.Invalidate();
+    }
+
+    private void OnBlankTimeClicked(object? sender, EventArgs e)
+    {
+        if (_selected is null) return;
+        _selected.State.SaveTime(string.Empty);
+        BubbleTimeLabel.Text      = _selected.DisplayTime;
+        BubbleTimeLabel.IsVisible = true;
+        BubbleTimeEntry.IsVisible = false;
+        TimePickerPanel.IsVisible = false;
+        EditActions.IsVisible     = false;
+        ThumbsDownBtn.IsVisible   = true;
+        NormalActions.IsVisible   = true;
+        _ = PersistProgressAsync();
+        if (IsLocationReviewOrEditStep(_selected))
+        {
+            OnBubbleTapped(_selected);
+            return;
+        }
+        AdvanceFocus();
+    }
+
+    private void OnXTimeClicked(object? sender, EventArgs e)
+    {
+        if (_selected is null) return;
+        _selected.State.SaveTime("x");
+        BubbleTimeLabel.Text      = _selected.DisplayTime;
+        BubbleTimeLabel.IsVisible = true;
+        BubbleTimeEntry.IsVisible = false;
+        TimePickerPanel.IsVisible = false;
+        EditActions.IsVisible     = false;
+        ThumbsDownBtn.IsVisible   = true;
+        NormalActions.IsVisible   = true;
+        _ = PersistProgressAsync();
+        if (IsLocationReviewOrEditStep(_selected))
+        {
+            OnBubbleTapped(_selected);
+            return;
+        }
+        AdvanceFocus();
+    }
+
+    private void OnOtherTimeClicked(object? sender, EventArgs e)
+    {
+        TimePickerPanel.IsVisible = false;
+        BubbleTimeEntry.IsVisible = true;
+        BubbleTimeEntry.Focus();
     }
 
     private void OnEditSaveClicked(object? sender, EventArgs e)
     {
         if (_selected is null) return;
-        _selected.State.SaveTime(BubbleTimeEntry.Text ?? string.Empty);
+        var origDisplay = _selected.State.DisplayTime;
+        // If the text entry is visible the user typed a free-form value; otherwise use the pickers.
+        string timeValue = BubbleTimeEntry.IsVisible
+            ? (BubbleTimeEntry.Text ?? string.Empty)
+            : TimeFormatHelper.FormatTimeRange(StartTimePicker.Time ?? TimeSpan.FromHours(9),
+                                              EndTimePicker.Time   ?? TimeSpan.FromHours(17));
+        if (!BubbleTimeEntry.IsVisible)
+            TryRecordCrossTwelvePreference(
+                origDisplay,
+                StartTimePicker.Time ?? TimeSpan.FromHours(9),
+                EndTimePicker.Time   ?? TimeSpan.FromHours(17));
+        _selected.State.SaveTime(timeValue);
         BubbleTimeLabel.Text      = _selected.DisplayTime;
         BubbleTimeLabel.IsVisible = true;
         BubbleTimeEntry.IsVisible = false;
+        TimePickerPanel.IsVisible = false;
         EditActions.IsVisible     = false;
         ThumbsDownBtn.IsVisible   = true;
+        NormalActions.IsVisible   = true;
         _ = PersistProgressAsync();
+        if (IsLocationReviewOrEditStep(_selected))
+        {
+            OnBubbleTapped(_selected);
+            return;
+        }
         AdvanceFocus();
     }
 
@@ -526,15 +685,43 @@ public partial class ConfirmationPage : ContentPage
         _selected.State.DismissEdit();
         BubbleTimeLabel.IsVisible = true;
         BubbleTimeEntry.IsVisible = false;
+        TimePickerPanel.IsVisible = false;
         EditActions.IsVisible     = false;
         ThumbsDownBtn.IsVisible   = true;
+        NormalActions.IsVisible   = true;
         BubbleCanvas.Invalidate();
         UpdateConfirmProgress();
     }
 
-    private void OnEditPositionClicked(object? sender, EventArgs e)
+    /// <summary>Parses "H:mm-H:mm" (or "H:mm") into the two TimePicker controls.
+    /// Applies the cross-12 AM/PM preference (start AM/end PM by default; inverted if user has corrected).
+    /// </summary>
+    private void SeedTimePickers(string displayTime)
     {
-        if (_selected is null) return;
+        var (start, end) = TimeFormatHelper.SeedTimePickers(displayTime, _crossTwelveStartIsPm);
+        StartTimePicker.Time = start;
+        EndTimePicker.Time   = end;
+    }
+
+    /// <summary>
+    /// Records the user's AM/PM preference for cross-12 shift times after their first edit.
+    /// Only fires once per schedule run (preference is stable across the whole schedule).
+    /// </summary>
+    private void TryRecordCrossTwelvePreference(string originalDisplayTime, TimeSpan savedStart, TimeSpan savedEnd)
+    {
+        if (_crossTwelvePreferenceSet) return;
+        // Detect cross-12: both tokens were in the 0–11h range and start > end.
+        var (rawStart, rawEnd) = TimeFormatHelper.SeedTimePickers(originalDisplayTime);
+        bool wasCrossTwelve = rawStart.TotalHours < 12.0
+                           && rawEnd.TotalHours   < 12.0
+                           && rawStart.TotalHours > rawEnd.TotalHours;
+        if (!wasCrossTwelve) return;
+        _crossTwelveStartIsPm    = savedStart.TotalHours >= 12.0;
+        _crossTwelvePreferenceSet = true;
+    }
+
+    private void OnEditPositionClicked(object? sender, EventArgs e)
+    {        if (_selected is null) return;
         _selected.State.BeginEditPosition();
         _ = PersistProgressAsync();
         OnBubbleTapped(_selected);
@@ -550,16 +737,16 @@ public partial class ConfirmationPage : ContentPage
         _panLocked  = false;
         _zoomLocked = false;
         _lockedCX   = null;  // fresh lock for this bubble session
-        LockPanBtn.Text       = "🔓 Lock Pan";
+        LockPanBtn.Text       = "Lock Pan";
         LockPanBtn.Background = BackgroundFromResource("Gray300");
         ZoomSlider.IsVisible  = true;
         ZoomSlider.IsEnabled  = true;
 
         // Collapse detail card to give more room to the image.
-        BubbleEmployeeLabel.IsVisible = false;
         BubbleDateLabel.IsVisible     = false;
         BubbleTimeLabel.IsVisible     = false;
         BubbleTimeEntry.IsVisible     = false;
+        TimePickerPanel.IsVisible     = false;
         EditActions.IsVisible         = false;
         NormalActions.IsVisible       = false;
         PositionEditActions.IsVisible = true;
@@ -569,28 +756,25 @@ public partial class ConfirmationPage : ContentPage
         if (_selected is not null)
         {
             SeedBoundsFromPreviousIfNeeded(_selected);
-            PositionTargetLabel.Text      = _selected.DisplayTime;
+            PositionTargetLabel.Text      = FormatShiftDate(_selected.Shift.Date) + "\n" + _selected.DisplayTime;
             PositionTargetLabel.IsVisible = true;
         }
         ShowPositionTargetRect();
-        _ = ScrollToBubbleAsync(_selected);
         _ = PersistProgressAsync();
         UpdateOverlayEditVisualState();
     }
 
     private void ExitPositionEditMode()
     {
-        // Restore card to normal time-confirm state.
-        BubbleEmployeeLabel.IsVisible = true;
+        // Restore the detail card to normal confirm state.
         BubbleDateLabel.IsVisible     = true;
         BubbleTimeLabel.IsVisible     = true;
         NormalActions.IsVisible       = true;
-        PositionEditActions.IsVisible  = false;
-        PositionTargetRect.IsVisible  = false;
-        PositionTargetLabel.IsVisible  = false;
-        PositionDebugLabel.IsVisible   = false;
-        ZoomControlsPanel.IsVisible    = false;
+        PositionEditActions.IsVisible = false;
+        PositionDebugLabel.IsVisible  = false;
         _lockedCX = null;
+        // Keep rect + zoom visible — UpdateOverlayEditVisualState re-syncs to current step.
+        UpdateOverlayEditVisualState();
     }
 
     private void OnPositionSaveClicked(object? sender, EventArgs e)
@@ -610,34 +794,84 @@ public partial class ConfirmationPage : ContentPage
         if (_selected is null) return;
         _selected.State.CancelEditPosition();
         _ = PersistProgressAsync();
-        ExitPositionEditMode();
-        UpdateOverlayEditVisualState();
-        BubbleCanvas.Invalidate();
+        // Re-render the entire card from current state — TimeState may now be Pending,
+        // so ExitPositionEditMode() alone would leave the UI in a wrong half-state.
+        OnBubbleTapped(_selected);
     }
 
-    private async Task ScrollToBubbleAsync(BubbleViewModel? bubble)
+    private async Task ScrollToBubbleAsync(BubbleViewModel? bubble, bool useInterpolation = false)
     {
         if (bubble is null) return;
 
-        // Auto-zoom to 2× if we’re at 1:1 — makes individual rows readable without user pinching.
+        // Auto-zoom to 2x if at 1:1 -- makes individual rows readable without user pinching.
         if (_zoomScale < 1.5f)
         {
             ApplyZoomScale(2f);
             await Task.Delay(120); // allow layout pass to resize ImageContainer
         }
 
-        // Re-read ScreenBounds AFTER the potential zoom recalculation — they are now in current
-        // zoomed container space, so no extra _zoomScale multiply is needed.
-        var r = bubble.ScreenBounds;
-        if (r.Width <= 0) return;
+        double scrollX, scrollY;
 
-        var cx      = r.X + r.Width  / 2.0;
-        var cy      = r.Y + r.Height / 2.0;
-        var scrollX = Math.Max(0, cx - ImageScrollView.Width  / 2.0);
-        // Reuse the most-recently confirmed scroll-Y so the row axis follows the latest anchor.
-        // If the schedule is split across two rows the user will confirm on the new row and
-        // _confirmedScrollY will update, then subsequent bubbles track to the new row.
-        var scrollY = _confirmedScrollY ?? Math.Max(0, cy - ImageScrollView.Height / 2.0);
+        // Already confirmed: scroll directly to the exact location the user positioned it,
+        // using both the confirmed X and Y from ScreenBounds — no interpolation.
+        if (bubble.State.PositionState == PositionState.Confirmed && bubble.ScreenBounds.Width > 0)
+        {
+            var r = bubble.ScreenBounds;
+            scrollX = Math.Max(0, r.X + r.Width  / 2.0 + _imagePad - ImageScrollView.Width  / 2.0);
+            scrollY = Math.Max(0, r.Y + r.Height / 2.0 + _imagePad - ImageScrollView.Height / 2.0);
+            _intendedScrollX = scrollX;
+            await ImageScrollView.ScrollToAsync(scrollX, scrollY, animated: true);
+            return;
+        }
+
+        if (useInterpolation)
+        {
+            // Time-confirm step (position opt-in flow): derive X from calibrated anchor positions,
+            // not raw server ScreenBounds. Mirrors SeedBoundsFromPreviousIfNeeded's X-logic exactly
+            // but without mutating the bubble's bounds or ScreenBounds.
+            var (scaleX, _, offsetX, _) = GetImageTransform();
+            if (scaleX > 0)
+            {
+                var idx = _bubbles.IndexOf(bubble);
+                int imgX, imgW;
+                if (_lastConfirmedImageBounds is { Width: > 0 } anchor)
+                {
+                    // With 1 confirmed: step ahead from anchor; with 2+: interpolate between confirmed.
+                    var xStep = _naturalImageWidth > 0 ? _naturalImageWidth / 8 : anchor.Width;
+                    imgX = InterpolateImageX(idx) ?? (anchor.X + xStep);
+                    imgW = anchor.Width;
+                }
+                else if (bubble.Shift.EstimatedBounds is { Width: > 0 } existing)
+                {
+                    // No confirmed anchor yet -- use server-predicted position for first bubble only.
+                    imgX = existing.X;
+                    imgW = existing.Width;
+                }
+                else
+                {
+                    return; // no position info at all -- leave viewport unchanged
+                }
+                var screenCX = imgX * scaleX + offsetX + imgW * scaleX / 2.0;
+                scrollX = Math.Max(0, screenCX + _imagePad - ImageScrollView.Width / 2.0);
+            }
+            else
+            {
+                // Transform not ready -- fall back to screen bounds.
+                var r = bubble.ScreenBounds;
+                if (r.Width <= 0) return;
+                scrollX = Math.Max(0, r.X + r.Width / 2.0 + _imagePad - ImageScrollView.Width / 2.0);
+            }
+            scrollY = _confirmedScrollY ?? Math.Max(0, bubble.ScreenBounds.Y + bubble.ScreenBounds.Height / 2.0 + _imagePad - ImageScrollView.Height / 2.0);
+        }
+        else
+        {
+            // Location-edit step: SeedBoundsFromPreviousIfNeeded has already updated ScreenBounds
+            // with the calibrated seed position -- just scroll there directly.
+            var r = bubble.ScreenBounds;
+            if (r.Width <= 0) return;
+            scrollX = Math.Max(0, r.X + r.Width  / 2.0 + _imagePad - ImageScrollView.Width  / 2.0);
+            scrollY = _confirmedScrollY ?? Math.Max(0, r.Y + r.Height / 2.0 + _imagePad - ImageScrollView.Height / 2.0);
+        }
 
         _intendedScrollX = scrollX;  // track programmatic scroll for zoom captures
         await ImageScrollView.ScrollToAsync(scrollX, scrollY, animated: true);
@@ -648,7 +882,8 @@ public partial class ConfirmationPage : ContentPage
         _lastRectWidth               = _rectBounds.Width;
         _lastRectHeight              = _rectBounds.Height;
         DragOverlay.IsVisible        = false;
-        PositionTargetRect.IsVisible = false;
+        PositionTargetRect.IsVisible  = false;
+        PositionTargetLabel.IsVisible = false;   // prevent stale label (e.g. "mmm") persisting when no next bubble
         PositionDebugLabel.IsVisible  = false;
         LockPanBtn.IsVisible         = false;
         ZoomControlsPanel.IsVisible  = false;
@@ -688,8 +923,8 @@ public partial class ConfirmationPage : ContentPage
         var height = _lastRectHeight > 0 ? _lastRectHeight : (bubble.ScreenBounds.Height > 0 ? bubble.ScreenBounds.Height : 70f);
 
         // Start in the middle of the currently visible viewport (not image origin).
-        var centerX = (float)ImageScrollView.ScrollX + (float)(ImageScrollView.Width / 2d);
-        var centerY = (float)ImageScrollView.ScrollY + (float)(ImageScrollView.Height / 2d);
+        var centerX = (float)(ImageScrollView.ScrollX - _imagePad) + (float)(ImageScrollView.Width  / 2d);
+        var centerY = (float)(ImageScrollView.ScrollY - _imagePad) + (float)(ImageScrollView.Height / 2d);
 
         _rectBounds = new RectF(
             centerX - width / 2f,
@@ -703,11 +938,12 @@ public partial class ConfirmationPage : ContentPage
     {
         // _rectBounds is in ImageContainer (scroll-content) space.
         // DragOverlay is now a sibling of the ScrollView in viewport space, so subtract scroll offset.
+        // Add _imagePad because ImageContainer is inset by _imagePad within ScrollContent.
         var sx = (float)ImageScrollView.ScrollX;
         var sy = (float)ImageScrollView.ScrollY;
         var r  = _rectBounds;
-        var x  = r.X - sx;
-        var y  = r.Y - sy;
+        var x  = r.X + (float)_imagePad - sx;
+        var y  = r.Y + (float)_imagePad - sy;
         AbsoluteLayout.SetLayoutBounds(SelectedRectBorder, new Microsoft.Maui.Graphics.Rect(x, y, r.Width, r.Height));
         AbsoluteLayout.SetLayoutBounds(SelectedRectFill, new Microsoft.Maui.Graphics.Rect(x, y, r.Width, r.Height));
         AbsoluteLayout.SetLayoutBounds(RectMoveHandle,   new Microsoft.Maui.Graphics.Rect(x, y, r.Width, r.Height));
@@ -751,6 +987,29 @@ public partial class ConfirmationPage : ContentPage
 #endif
     }
 
+    // ── Position diagnostics ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Appends one NDJSON line to position-diag.ndjson in AppDataDirectory.
+    /// Used to diagnose coordinate-space bugs (Bug 1: rect vs canvas alignment,
+    /// Bug 2: first-rect sizing).  Fire-and-forget; never throws.
+    /// Pull the file with: adb shell run-as &lt;package&gt; cat files/position-diag.ndjson
+    /// </summary>
+    private void AppendPositionDiag(string step, object payload)
+    {
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var path = Path.Combine(FileSystem.Current.AppDataDirectory, "position-diag.ndjson");
+                var line = System.Text.Json.JsonSerializer.Serialize(
+                    new { step, ts = DateTime.Now.ToString("HH:mm:ss.fff"), data = payload });
+                File.AppendAllText(path, line + "\n");
+            }
+            catch { /* never crash the UI */ }
+        });
+    }
+
     // ── Lock pan toggle ───────────────────────────────────────────────────────
 
     private void OnLockPanClicked(object? sender, EventArgs e)
@@ -763,7 +1022,7 @@ public partial class ConfirmationPage : ContentPage
         _panLocked  = !_panLocked;
         _zoomLocked = _panLocked;
 
-        LockPanBtn.Text      = _panLocked ? "🔒 Unlock Pan" : "🔓 Lock Pan";
+        LockPanBtn.Text      = _panLocked ? "Unlock Pan" : "Lock Pan";
         LockPanBtn.Background = _panLocked
             ? BackgroundFromResource("Primary")
             : BackgroundFromResource("Gray300");
@@ -777,7 +1036,7 @@ public partial class ConfirmationPage : ContentPage
         var hiding                  = ZoomSliderWrapper.IsVisible; // true = currently visible → we're hiding
         ZoomSliderWrapper.IsVisible = !hiding;
         ZoomSlider.IsEnabled        = !hiding;
-        ZoomHideBtn.Text            = hiding ? "👁" : "🙈";
+        ZoomHideBtn.Text = hiding ? MaterialGlyphs.VisibilityOff : MaterialGlyphs.Visibility;
     }
 
     private void OnZoomSliderValueChanged(object? sender, ValueChangedEventArgs e)
@@ -792,16 +1051,18 @@ public partial class ConfirmationPage : ContentPage
     {
         if (_zoomLocked) return;
         _zoomGestureActive = true;
-        // Capture the locked column NOW — layout is stable and _intendedScrollX is correct.
+        // Capture the locked column/row NOW — layout is stable and _intendedScrollX is correct.
         // This is the authoritative capture for the entire drag gesture.
-        if (PositionTargetRect.IsVisible && ImageScrollView.Width > 0)
+        if (PositionTargetRect.IsVisible && ImageScrollView.Width > 0 && ImageScrollView.Height > 0)
         {
-            var (sx, _, ox, _) = GetImageTransform();
-            if (sx > 0 && _renderedImageSize.Width > 0)
+            var (sx, sy, ox, oy) = GetImageTransform();
+            if (sx > 0 && sy > 0 && _renderedImageSize.Width > 0 && _renderedImageSize.Height > 0)
             {
-                _pendingMarkerCX = ZoomScrollMath.CaptureMarkerColumn(_intendedScrollX, ImageScrollView.Width, sx, ox);
+                _pendingMarkerCX = ZoomScrollMath.CaptureMarkerColumn(_intendedScrollX - _imagePad, ImageScrollView.Width, sx, ox);
                 _lockedCX        = _pendingMarkerCX;
-                System.Diagnostics.Debug.WriteLine($"[DRAG-START]   scrollX={_intendedScrollX:F1} sx={sx:F4} ox={ox:F1} => markerCX={_pendingMarkerCX:F1}");
+                _pendingMarkerCY = ZoomScrollMath.CaptureMarkerColumn(ImageScrollView.ScrollY - _imagePad, ImageScrollView.Height, sy, oy);
+                _lockedCY        = _pendingMarkerCY;
+                System.Diagnostics.Debug.WriteLine($"[DRAG-START]   scrollX={_intendedScrollX:F1} scrollY={ImageScrollView.ScrollY:F1} sx={sx:F4} sy={sy:F4} ox={ox:F1} oy={oy:F1} => markerCX={_pendingMarkerCX:F1} markerCY={_pendingMarkerCY:F1}");
             }
         }
     }
@@ -853,6 +1114,10 @@ public partial class ConfirmationPage : ContentPage
 
         ImageContainer.WidthRequest  = _baseImageSize.Width * _zoomScale;
         ImageContainer.HeightRequest = _baseImageSize.Height * _zoomScale;
+        _imagePad                    = ExtraPad;
+        ScrollContent.Padding        = new Thickness(ExtraPad);
+        ScrollContent.WidthRequest   = _baseImageSize.Width  * _zoomScale + ExtraPad * 2;
+        ScrollContent.HeightRequest  = _baseImageSize.Height * _zoomScale + ExtraPad * 2;
 
         _updatingZoomSlider = true;
         ZoomSlider.Value = _zoomScale;
@@ -872,7 +1137,7 @@ public partial class ConfirmationPage : ContentPage
             {
                 // Use _intendedScrollX (last commanded position) not ImageScrollView.ScrollX
                 // which lags behind because async ScrollToAsync hasn't settled yet.
-                var captureScrollX = _intendedScrollX;
+                var captureScrollX = _intendedScrollX - _imagePad;
                 // Only overwrite the lock if we are NOT mid-gesture.
                 // The authoritative capture happens in OnZoomDragStarted; subsequent
                 // ValueChanged events during the drag should NOT re-capture.
@@ -1075,25 +1340,22 @@ public partial class ConfirmationPage : ContentPage
 
         // PositionTargetRect sits inside a centered VerticalStackLayout (Spacing=0) with
         // PositionTargetLabel above it and PositionDebugLabel below it.
-        // The naive center-of-viewport formula ignores the label above the rect, causing a
-        // systematic downward offset equal to half the label's height. Correct for it explicitly.
-        var markerW     = PositionTargetRect.Width;
-        var markerH     = PositionTargetRect.Height;
-        var labelOffset = PositionTargetLabel.IsVisible ? PositionTargetLabel.Height : 0.0;
-        var debugOffset = PositionDebugLabel.IsVisible  ? PositionDebugLabel.Height  : 0.0;
-        var totalStackH = labelOffset + markerH + debugOffset;   // Spacing=0
-        var viewX       = (ImageScrollView.Width  - markerW)    / 2.0;
-        var viewY       = (ImageScrollView.Height - totalStackH) / 2.0 + labelOffset;
-
-        // Shift to image-container space (viewport origin + scroll offset).
-        var containerX = viewX + ImageScrollView.ScrollX;
-        var containerY = viewY + ImageScrollView.ScrollY;
-
-        // Convert to image-pixel space via inverse of GetImageTransform.
-        var imgX = (int)Math.Round((containerX - offsetX) / scaleX);
-        var imgY = (int)Math.Round((containerY - offsetY) / scaleY);
-        var imgW = (int)Math.Round(markerW / scaleX);
-        var imgH = (int)Math.Round(markerH / scaleY);
+        // MarkerPositionMath.ComputeImageCoords corrects for the label-above asymmetry.
+        // Pass _imagePad so the math can adjust from ScrollContent coords to ImageContainer coords.
+        var (imgX, imgY, imgW, imgH) = MarkerPositionMath.ComputeImageCoords(
+            scrollX:   ImageScrollView.ScrollX,
+            scrollY:   ImageScrollView.ScrollY,
+            viewportW: ImageScrollView.Width,
+            viewportH: ImageScrollView.Height,
+            markerW:   PositionTargetRect.Width,
+            markerH:   PositionTargetRect.Height,
+            labelH:    PositionTargetLabel.IsVisible ? PositionTargetLabel.Height : 0.0,
+            debugH:    PositionDebugLabel.IsVisible  ? PositionDebugLabel.Height  : 0.0,
+            scaleX:    scaleX,
+            scaleY:    scaleY,
+            offsetX:   offsetX,
+            offsetY:   offsetY,
+            imagePad:  _imagePad);
 
         bubble.Shift.EstimatedBounds = new BoundingBox
         {
@@ -1125,6 +1387,33 @@ public partial class ConfirmationPage : ContentPage
             (float)(bubble.Shift.EstimatedBounds.Y * scaleY + offsetY),
             (float)(bubble.Shift.EstimatedBounds.Width  * scaleX),
             (float)(bubble.Shift.EstimatedBounds.Height * scaleY));
+
+        // Diagnostic: screenBounds.X/Y should match expectedContainer within ±1 px.
+        // If they diverge, the confirmed canvas border will not land on the target rect.
+        AppendPositionDiag("ConfirmPosition", new
+        {
+            scrollX        = ImageScrollView.ScrollX,
+            scrollY        = ImageScrollView.ScrollY,
+            viewportW      = ImageScrollView.Width,
+            viewportH      = ImageScrollView.Height,
+            labelH         = PositionTargetLabel.IsVisible ? PositionTargetLabel.Height : 0.0,
+            debugH         = PositionDebugLabel.IsVisible  ? PositionDebugLabel.Height  : 0.0,
+            markerW        = PositionTargetRect.Width,
+            markerH        = PositionTargetRect.Height,
+            scaleX, scaleY, offsetX, offsetY,
+            imgX, imgY, imgW, imgH,
+            screenBoundsX  = bubble.ScreenBounds.X,
+            screenBoundsY  = bubble.ScreenBounds.Y,
+            screenBoundsW  = bubble.ScreenBounds.Width,
+            screenBoundsH  = bubble.ScreenBounds.Height,
+            // Container-space top-left of the rect at the moment the user tapped confirm.
+            // screenBoundsX/Y must equal these within ±1 px (rounding only).
+            // NOTE: scrollX/Y are in ScrollContent space; ImageContainer is inset by _imagePad,
+            // so subtract _imagePad to get the rect position in ImageContainer/canvas space.
+            imagePad           = _imagePad,
+            expectedContainerX = (ImageScrollView.ScrollX - _imagePad) + (ImageScrollView.Width  - PositionTargetRect.Width)  / 2.0,
+            expectedContainerY = (ImageScrollView.ScrollY - _imagePad) + (ImageScrollView.Height - PositionTargetLabel.Height - PositionTargetRect.Height - PositionDebugLabel.Height) / 2.0 + PositionTargetLabel.Height,
+        });
 
         BubbleCanvas.Invalidate();
     }
@@ -1196,35 +1485,36 @@ public partial class ConfirmationPage : ContentPage
     /// Returns null when fewer than two positions have been confirmed.
     /// </summary>
     private int? InterpolateImageX(int bubbleIndex)
-    {
-        if (_confirmedPositions.Count < 2) return null;
-        var first = _confirmedPositions[0];
-        var last  = _confirmedPositions[^1];
-        if (first.Index == last.Index) return null;
-        var t = (double)(bubbleIndex - first.Index) / (last.Index - first.Index);
-        return (int)Math.Round(first.ImageX + (last.ImageX - first.ImageX) * t);
-    }
+        => PositionInterpolator.Interpolate(_confirmedPositions, bubbleIndex);
 
     /// <summary>Sizes and shows the fixed PositionTargetRect at ~1/3 of the visible image width.</summary>
     private void ShowPositionTargetRect()
     {
-        double markerW, markerH;
-        if (_lastConfirmedImageBounds is { Width: > 0 } prev)
+        // Pre-layout guard: _renderedImageSize is zero until the ScheduleImage SizeChanged event
+        // fires.  Calling here with _renderedImageSize.Width == 0 makes GetImageTransform return
+        // (1,1,0,0) and ImageScrollView.Width is still -1, so PositionTargetSizer falls to the
+        // 100dp MinUncalibratedW floor (different from the post-layout 137dp).
+        // OnImageSizeChanged → UpdateOverlayEditVisualState will call here again with real values.
+        if (_renderedImageSize.Width <= 0) return;
+        // GetImageTransform() already incorporates _zoomScale (via _renderedImageSize),
+        // so multiply by scaleX only — no extra _zoomScale factor.
+        var (scaleX, scaleY, _, _) = GetImageTransform();
+        var (markerW, markerH) = PositionTargetSizer.Compute(
+            _lastConfirmedImageBounds, scaleX, scaleY, ImageScrollView.Width);
+        AppendPositionDiag("ShowTargetRect", new
         {
-            // GetImageTransform() already incorporates _zoomScale (via _renderedImageSize),
-            // so multiply by scaleX only — no extra _zoomScale factor.
-            var (scaleX, scaleY, _, _) = GetImageTransform();
-            markerW = Math.Max(60d,  prev.Width  * scaleX);
-            markerH = Math.Max(20d,  prev.Height * scaleY);
-        }
-        else
-        {
-            markerW = Math.Max(100d, ImageScrollView.Width / 3.0);
-            markerH = Math.Max(40d,  markerW / 4.5);   // typical schedule-row aspect ratio
-        }
-        PositionTargetRect.WidthRequest  = markerW;
-        PositionTargetRect.HeightRequest = markerH;
-        PositionTargetRect.IsVisible     = true;
+            hasPrevBounds = _lastConfirmedImageBounds is { Width: > 0 },
+            prevBoundsW   = _lastConfirmedImageBounds?.Width,
+            prevBoundsH   = _lastConfirmedImageBounds?.Height,
+            scaleX, scaleY,
+            viewportW     = ImageScrollView.Width,
+            imagePad      = _imagePad,
+            markerW, markerH,
+        });
+        PositionTargetRect.WidthRequest   = markerW;
+        PositionTargetRect.HeightRequest  = markerH;
+        PositionTargetRect.IsVisible      = true;
+        PositionTargetLabel.WidthRequest  = markerW;
         UpdatePositionDebugLabel();
     }
 
@@ -1250,7 +1540,7 @@ public partial class ConfirmationPage : ContentPage
 
     private static string SerializeBubbles(List<BubbleViewModel> bubbles)
     {
-        var list = bubbles.Select(b => new BubblePersist(
+        var dtos = bubbles.Select(b => new BubblePersist(
             b.Shift.Employee,
             b.Shift.Date,
             b.Shift.TimeRange,
@@ -1260,18 +1550,16 @@ public partial class ConfirmationPage : ContentPage
             b.Shift.EstimatedBounds?.X,
             b.Shift.EstimatedBounds?.Y,
             b.Shift.EstimatedBounds?.Width,
-            b.Shift.EstimatedBounds?.Height)).ToList();
+            b.Shift.EstimatedBounds?.Height));
 
-        return JsonSerializer.Serialize(list);
+        return BubblePersistenceService.Serialize(dtos);
     }
 
     private static List<BubbleViewModel> DeserializeBubbles(string json)
     {
-        List<BubblePersist>? list = null;
-        try { list = JsonSerializer.Deserialize<List<BubblePersist>>(json, _json); }
-        catch { /* malformed JSON — treat as empty */ }
+        var list = BubblePersistenceService.Deserialize(json);
 
-        return (list ?? []).Select(p =>
+        return list.Select(p =>
         {
             BoundingBox? bounds = p.BoundsX is int bx
                 ? new BoundingBox
@@ -1363,10 +1651,23 @@ public partial class ConfirmationPage : ContentPage
 
     private void UpdateOverlayEditVisualState()
     {
-        // Drag rect removed — PositionTargetRect is the fixed centered marker the user aligns the image under.
         DragOverlay.IsVisible        = false;
         DragOverlay.InputTransparent = true;
-        PositionTargetRect.IsVisible = IsLocationReviewOrEditStep(_selected);
+
+        if (_positionOptIn && _selected is not null
+            && _selected.State.PositionState is PositionState.Pending or PositionState.Editing)
+        {
+            // PositionTargetRect is the sole visual indicator during time-confirm and location-edit.
+            // Hidden for Confirmed/Skipped bubbles — the canvas border is enough once positioned.
+            PositionTargetLabel.Text      = FormatShiftDate(_selected.Shift.Date) + "\n" + _selected.DisplayTime;
+            PositionTargetLabel.IsVisible = true;
+            ShowPositionTargetRect();
+        }
+        else
+        {
+            PositionTargetRect.IsVisible  = false;
+            PositionTargetLabel.IsVisible = false;
+        }
     }
 
     private void UpdateHeaderProgress()
@@ -1451,6 +1752,9 @@ public partial class ConfirmationPage : ContentPage
         SetPanel(Panel.Error);
     }
 
+    private static string FormatShiftDate(string isoDate)
+        => DateTime.TryParse(isoDate, out var d) ? d.ToString("ddd, MMM d") : isoDate;
+
     private static string GetMondayOfWeek(List<ShiftData> shifts)
     {
         foreach (var s in shifts)
@@ -1514,24 +1818,25 @@ public partial class ConfirmationPage : ContentPage
 
                 if (drawLabel)
                 {
+                    var dateText = FormatShiftDate(b.Shift.Date);
+                    var timeText = b.DisplayTime;
+                    var lineH    = isSelected ? 14f : 12f;
+                    var labelH   = lineH * 2;
+                    var labelW   = b.ScreenBounds.Width;
+                    var labelX   = b.ScreenBounds.X;
+                    var labelY   = MathF.Max(0f, b.ScreenBounds.Y - labelH);
+
                     canvas.FillColor = new Color(0f, 0f, 0f, 0.65f);
-                    var labelY = MathF.Max(0f, b.ScreenBounds.Y - 18f);
-                    canvas.FillRectangle(
-                        b.ScreenBounds.X,
-                        labelY,
-                        MathF.Max(90f, b.ScreenBounds.Width),
-                        18f);
+                    canvas.FillRectangle(labelX, labelY, labelW, labelH);
 
                     canvas.FontColor = Colors.White;
                     canvas.FontSize  = isSelected ? 12f : 11f;
-                    canvas.DrawString(
-                        b.DisplayTime,
-                        b.ScreenBounds.X + 2,
-                        labelY,
-                        b.ScreenBounds.Width,
-                        18,
-                        HorizontalAlignment.Left,
-                        VerticalAlignment.Center);
+                    // Date line (top)
+                    canvas.DrawString(dateText, labelX, labelY,       labelW, lineH,
+                        HorizontalAlignment.Center, VerticalAlignment.Center);
+                    // Time line (bottom)
+                    canvas.DrawString(timeText, labelX, labelY + lineH, labelW, lineH,
+                        HorizontalAlignment.Center, VerticalAlignment.Center);
                 }
 
                 // Below confirmed-position bubbles, show the image-pixel centre so

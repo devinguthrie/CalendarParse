@@ -1,0 +1,73 @@
+# Bug 3 regression guard — PositionTargetLabel must be cleared when AdvanceFocus fires.
+#
+# Root cause: AdvanceFocus() hid PositionTargetRect and PositionDebugLabel but did NOT
+# set PositionTargetLabel.IsVisible = false. After advancing to the next bubble,
+# the stale time label (e.g. "mmm") remained visible on screen.
+#
+# This test encodes the sequence that revealed Bug 3:
+#   Edit → type "mmm" → Save  (label shows "mmm" in position-edit mode)
+#   Save Position              (AdvanceFocus fires → label MUST disappear)
+#
+# Assertion: after SavePosition / AdvanceFocus, text "mmm" must NOT appear anywhere.
+#
+# Run:
+#   maestro test maestro/position-label-clears-on-advance.yaml
+
+appId: com.companyname.calendarparse
+---
+
+# ── 1. Launch fresh ──────────────────────────────────────────────────────────
+- stopApp
+- launchApp
+
+# ── 2. Open debug harness ────────────────────────────────────────────────────
+- tapOn:
+    id: OverlayHarnessBtn
+
+# ── 3. Wait for first bubble to be auto-selected ────────────────────────────
+- extendedWaitUntil:
+    visible:
+      id: ConfirmActionBtn
+    timeout: 8000
+
+# ── 4. Enter time-edit mode ───────────────────────────────────────────────────
+- tapOn:
+    text: "Edit"
+- waitForAnimationToEnd
+
+# ── 5. Switch to free-text entry and type "mmm" ──────────────────────────────
+- tapOn:
+    id: OtherTimeBtn
+- waitForAnimationToEnd
+- tapOn:
+    id: BubbleTimeEntry
+- inputText: "mmm"
+
+# ── 6. Save the time edit ─────────────────────────────────────────────────────
+# SaveTime("mmm") → PositionState: Pending → Editing → EnterLocationEditMode
+# EnterLocationEditMode sets PositionTargetLabel.Text = "mmm" and IsVisible = true
+- tapOn:
+    id: EditSaveBtn
+- waitForAnimationToEnd
+
+# ── 7. Verify "mmm" IS visible before the advance (pre-condition) ────────────
+- assertVisible:
+    id: PositionTargetLabel
+
+- takeScreenshot: label-clears-01-label-showing-mmm
+
+# ── 8. Save position → triggers AdvanceFocus ──────────────────────────────────
+# OnPositionSaveClicked → ConfirmPosition → ExitPositionEditMode → AdvanceFocus
+# AdvanceFocus must set PositionTargetLabel.IsVisible = false before selecting the
+# next bubble. Without the fix, "mmm" would persist on-screen.
+- tapOn:
+    text: "Save Position"
+- waitForAnimationToEnd
+
+- takeScreenshot: label-clears-02-after-advance
+
+# ── 9. Assert "mmm" is gone ───────────────────────────────────────────────────
+# The next bubble's label (a different time string) may now be visible —
+# we only care that the stale "mmm" text is no longer on screen.
+- assertNotVisible:
+    text: "mmm"

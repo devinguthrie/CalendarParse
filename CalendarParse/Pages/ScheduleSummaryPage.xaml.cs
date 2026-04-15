@@ -7,30 +7,53 @@ namespace CalendarParse.Pages;
 public partial class ScheduleSummaryPage : ContentPage
 {
     private readonly ScheduleHistoryDb _db;
+    private readonly IServiceProvider? _services;
     private readonly List<ShiftData>   _shifts;
     private readonly int               _runId;   // -1 when called from a legacy path
+    private          bool              _shiftsInCalendar;
 
     public ScheduleSummaryPage(ScheduleHistoryDb db, List<ShiftData> shifts, int runId = -1)
+        : this(db, null, shifts, runId) { }
+
+    public ScheduleSummaryPage(ScheduleHistoryDb db, IServiceProvider? services, List<ShiftData> shifts, int runId = -1)
     {
         InitializeComponent();
-        _db     = db;
-        _shifts = shifts;
-        _runId  = runId;
+        _db       = db;
+        _services = services;
+        _shifts   = shifts;
+        _runId    = runId;
     }
 
     protected override async void OnAppearing()
     {
         base.OnAppearing();
+        EditScheduleBtn.IsVisible = _services is not null && _runId >= 0;
+        Shell.SetBackButtonBehavior(this, new BackButtonBehavior
+        {
+            Command = new Command(async () => await Shell.Current.GoToAsync("//HistoryPage"))
+        });
         await BuildSummaryAsync();
+        await CheckIfShiftsInCalendarAsync();
+    }
+
+    protected override bool OnBackButtonPressed()
+    {
+        Dispatcher.Dispatch(async () => await Shell.Current.GoToAsync("//HistoryPage"));
+        return true;
     }
 
     private async Task BuildSummaryAsync()
     {
+        // ── Filter to only scheduled shifts (skip "x", "blank", any non-time entry) ─
+        var scheduledShifts = _shifts
+            .Where(s => TryParseShiftTimes(s, out _, out _))
+            .ToList();
+
         // ── Total hours ───────────────────────────────────────────────────────
-        var totalMinutes = CalculateTotalMinutes(_shifts);
+        var totalMinutes = CalculateTotalMinutes(scheduledShifts);
         var hours        = totalMinutes / 60.0;
         TotalHoursLabel.Text  = $"{hours:F1} hrs this week";
-        ShiftCountLabel.Text  = $"{_shifts.Count} shift{(_shifts.Count == 1 ? "" : "s")}";
+        ShiftCountLabel.Text  = $"{scheduledShifts.Count} shift{(scheduledShifts.Count == 1 ? "" : "s")}";
 
         // ── Week-over-week diff ───────────────────────────────────────────────
         var weekStart = GetMondayOfCurrentWeek();
@@ -50,14 +73,14 @@ public partial class ScheduleSummaryPage : ContentPage
                 WeekStart    = weekStart.ToString("yyyy-MM-dd"),
                 ProcessedAt  = DateTime.UtcNow,
                 IsComplete   = true,
-                TotalCount   = _shifts.Count,
-                ConfirmedCount = _shifts.Count,
+                TotalCount   = scheduledShifts.Count,
+                ConfirmedCount = scheduledShifts.Count,
             });
             await _db.SaveChangesWithRetryAsync();
         }
 
         // ── Shift list ────────────────────────────────────────────────────────
-        var rows = _shifts
+        var rows = scheduledShifts
             .OrderBy(s => s.Date)
             .Select(s => $"{FormatDate(s.Date)}   {s.TimeRange}")
             .ToList();
@@ -74,6 +97,11 @@ public partial class ScheduleSummaryPage : ContentPage
         AddToCalendarBtn.IsEnabled = false;
         try
         {
+            if (_shiftsInCalendar)
+            {
+                await OpenCalendarToWeekAsync();
+                return;
+            }
 #if ANDROID
             await AddShiftsToAndroidCalendarAsync();
 #elif IOS
@@ -129,6 +157,11 @@ public partial class ScheduleSummaryPage : ContentPage
         }
 
         await DisplayAlertAsync("Done", $"{added} shift{(added == 1 ? "" : "s")} added to calendar.", "OK");
+        if (added > 0)
+        {
+            _shiftsInCalendar = true;
+            AddToCalendarBtn.Text = "Show in Calendar";
+        }
     }
 
     private static long ToUnixMs(DateTime dt)
@@ -163,6 +196,11 @@ public partial class ScheduleSummaryPage : ContentPage
         }
 
         await DisplayAlertAsync("Done", $"{added} shift{(added == 1 ? "" : "s")} added to calendar.", "OK");
+        if (added > 0)
+        {
+            _shiftsInCalendar = true;
+            AddToCalendarBtn.Text = "Show in Calendar";
+        }
     }
 #endif
 
@@ -257,7 +295,7 @@ public partial class ScheduleSummaryPage : ContentPage
             {
                 var title = cursor.GetString(0) ?? string.Empty;
                 if (!title.StartsWith("Work:", StringComparison.OrdinalIgnoreCase))
-                    conflicts.Add($"⚠ {FormatDate(shift.Date)}: overlaps '{title}'");
+                    conflicts.Add($"{FormatDate(shift.Date)}: overlaps '{title}'");
             }
             cursor.Close();
         }
@@ -269,6 +307,144 @@ public partial class ScheduleSummaryPage : ContentPage
         }
     }
 #endif
+
+    // ── Calendar presence check ─────────────────────────────────────────────
+
+    private async Task CheckIfShiftsInCalendarAsync()
+    {
+        try
+        {
+#if ANDROID
+            await CheckAndroidShiftsInCalendarAsync();
+#elif IOS
+            await CheckIosShiftsInCalendarAsync();
+#else
+            await Task.CompletedTask;
+#endif
+        }
+        catch { /* non-critical */ }
+    }
+
+#if ANDROID
+    private async Task CheckAndroidShiftsInCalendarAsync()
+    {
+        // Only use already-granted read access — never request here.
+        var status = await Permissions.CheckStatusAsync<Permissions.CalendarRead>();
+        if (status != PermissionStatus.Granted) return;
+
+        var scheduledShifts = _shifts.Where(s => TryParseShiftTimes(s, out _, out _)).ToList();
+        if (scheduledShifts.Count == 0) return;
+
+        var foundCount = 0;
+        foreach (var shift in scheduledShifts)
+        {
+            if (!TryParseShiftTimes(shift, out var start, out var end)) continue;
+            var uri = global::Android.Net.Uri.Parse(
+                $"content://com.android.calendar/instances/when/{ToUnixMs(start)}/{ToUnixMs(end)}");
+            if (uri is null) continue;
+
+            var cursor = global::Android.App.Application.Context.ContentResolver?.Query(
+                uri, ["title"], null, null, null);
+            if (cursor is null) continue;
+
+            while (cursor.MoveToNext())
+            {
+                var title = cursor.GetString(0) ?? string.Empty;
+                if (title.StartsWith("Work:", StringComparison.OrdinalIgnoreCase))
+                {
+                    foundCount++;
+                    break;
+                }
+            }
+            cursor.Close();
+        }
+
+        if (foundCount == scheduledShifts.Count)
+        {
+            _shiftsInCalendar = true;
+            AddToCalendarBtn.Text = "Show in Calendar";
+        }
+    }
+#endif
+
+#if IOS
+    private async Task CheckIosShiftsInCalendarAsync()
+    {
+        // Only check if the user has already granted full calendar access.
+        var authStatus = EventKit.EKEventStore.GetAuthorizationStatus(EventKit.EKEntityType.Event);
+        if (authStatus != EventKit.EKAuthorizationStatus.FullAccess &&
+            authStatus != EventKit.EKAuthorizationStatus.Authorized)
+            return;
+
+        var store = new EventKit.EKEventStore();
+        var scheduledShifts = _shifts.Where(s => TryParseShiftTimes(s, out _, out _)).ToList();
+        if (scheduledShifts.Count == 0) return;
+
+        var foundCount = 0;
+        foreach (var shift in scheduledShifts)
+        {
+            if (!TryParseShiftTimes(shift, out var start, out var end)) continue;
+            var pred   = store.PredicateForEvents((Foundation.NSDate)start, (Foundation.NSDate)end, null);
+            var events = store.EventsMatchingPredicate(pred);
+            if (events?.Any(ev => ev.Title?.StartsWith("Work:", StringComparison.OrdinalIgnoreCase) == true) == true)
+                foundCount++;
+        }
+
+        await Task.CompletedTask; // satisfies async signature on non-await path
+
+        if (foundCount == scheduledShifts.Count)
+        {
+            _shiftsInCalendar = true;
+            AddToCalendarBtn.Text = "Show in Calendar";
+        }
+    }
+#endif
+
+    private async Task OpenCalendarToWeekAsync()
+    {
+        try
+        {
+            // Navigate to the date of the first scheduled shift.
+            var weekDate = _shifts
+                .Where(s => DateTime.TryParse(s.Date, out _))
+                .Select(s => DateTime.Parse(s.Date))
+                .OrderBy(d => d)
+                .FirstOrDefault();
+            if (weekDate == default) weekDate = DateTime.Today;
+
+#if ANDROID
+            var ms      = ToUnixMs(weekDate);
+            var timeUri = global::Android.Net.Uri.Parse($"content://com.android.calendar/time/{ms}");
+            global::Android.Content.Intent intent;
+            if (timeUri is not null)
+            {
+                intent = new global::Android.Content.Intent(
+                    global::Android.Content.Intent.ActionView, timeUri);
+            }
+            else
+            {
+                intent = new global::Android.Content.Intent(
+                    global::Android.Content.Intent.ActionMain);
+                intent.AddCategory(global::Android.Content.Intent.CategoryAppCalendar);
+            }
+            // FLAG_ACTIVITY_NEW_TASK is required when starting from a non-Activity context.
+            intent.SetFlags(global::Android.Content.ActivityFlags.NewTask);
+            global::Android.App.Application.Context.StartActivity(intent);
+            await Task.CompletedTask;
+#elif IOS
+            var ts = (long)(weekDate.ToUniversalTime() - DateTime.UnixEpoch).TotalSeconds;
+            await Browser.Default.OpenAsync(
+                new Uri($"calshow://{ts}"), BrowserLaunchMode.External);
+#else
+            await DisplayAlertAsync("Not Supported",
+                "Opening the calendar app is not available on this platform.", "OK");
+#endif
+        }
+        catch
+        {
+            await DisplayAlertAsync("Error", "Could not open the calendar app.", "OK");
+        }
+    }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -329,6 +505,15 @@ public partial class ScheduleSummaryPage : ContentPage
         return DateTime.TryParse(iso, out var dt)
             ? dt.ToString("ddd MMM d")
             : iso;
+    }
+
+    private async void OnEditScheduleClicked(object? sender, EventArgs e)
+    {
+        if (_services is null || _runId < 0) return;
+
+        var page = _services.GetRequiredService<ConfirmationPage>();
+        await Navigation.PushAsync(page);
+        await page.StartResumeAsync(_runId);
     }
 }
 

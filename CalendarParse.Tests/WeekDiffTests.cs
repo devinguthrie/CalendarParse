@@ -51,4 +51,47 @@ public class QuietHoursTests
         var time   = new TimeOnly(th, tm);
         Assert.Equal(expected, WeekDiff.IsInQuietWindow(time, start, end));
     }
+
+    // Boundary tests driven by the notification-monitor suppression path.
+    // The monitor uses WeekDiff.IsInQuietWindow to decide whether to delay the event.
+
+    [Fact]
+    public void IsInQuietWindow_AtExactStart_IsInWindow()
+    {
+        // Notification arrives exactly at 22:00 — start is inclusive
+        Assert.True(WeekDiff.IsInQuietWindow(new TimeOnly(22, 0), new TimeOnly(22, 0), new TimeOnly(7, 0)));
+    }
+
+    [Fact]
+    public void IsInQuietWindow_AtExactEnd_IsNotInWindow()
+    {
+        // 07:00 is the end; end is exclusive — notification should NOT be suppressed
+        Assert.False(WeekDiff.IsInQuietWindow(new TimeOnly(7, 0), new TimeOnly(22, 0), new TimeOnly(7, 0)));
+    }
+
+    [Fact]
+    public void IsInQuietWindow_OneMinuteBeforeStart_IsNotInWindow()
+    {
+        // 21:59 — notification should go through immediately
+        Assert.False(WeekDiff.IsInQuietWindow(new TimeOnly(21, 59), new TimeOnly(22, 0), new TimeOnly(7, 0)));
+    }
+
+    [Fact]
+    public void IsInQuietWindow_Midnight_InsideMidnightSpanningWindow()
+    {
+        // 00:00 is between 22:00 and 07:00 — should be suppressed
+        Assert.True(WeekDiff.IsInQuietWindow(new TimeOnly(0, 0), new TimeOnly(22, 0), new TimeOnly(7, 0)));
+    }
+
+    [Fact]
+    public void IsInQuietWindow_SameDayWindow_ExactStart_IsInWindow()
+    {
+        Assert.True(WeekDiff.IsInQuietWindow(new TimeOnly(8, 0), new TimeOnly(8, 0), new TimeOnly(12, 0)));
+    }
+
+    [Fact]
+    public void IsInQuietWindow_SameDayWindow_ExactEnd_IsNotInWindow()
+    {
+        Assert.False(WeekDiff.IsInQuietWindow(new TimeOnly(12, 0), new TimeOnly(8, 0), new TimeOnly(12, 0)));
+    }
 }

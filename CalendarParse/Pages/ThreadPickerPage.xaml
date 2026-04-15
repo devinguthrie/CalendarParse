@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage
+    x:Class="CalendarParse.Pages.ThreadPickerPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    Title="Select Conversation">
+
+    <ContentPage.ToolbarItems>
+        <ToolbarItem Text="Cancel" Clicked="OnCancelClicked" />
+    </ContentPage.ToolbarItems>
+
+    <Grid RowDefinitions="Auto,*">
+
+        <SearchBar x:Name="SearchBar"
+                   Grid.Row="0"
+                   Placeholder="Search conversations…"
+                   TextChanged="OnSearchChanged" />
+
+        <Grid Grid.Row="1">
+
+            <!-- Loading spinner -->
+            <ActivityIndicator x:Name="Spinner"
+                               IsRunning="True"
+                               IsVisible="True"
+                               VerticalOptions="Center"
+                               HorizontalOptions="Center" />
+
+            <!-- Permission denied state -->
+            <VerticalStackLayout x:Name="PermissionDeniedView"
+                                 IsVisible="False"
+                                 Spacing="12"
+                                 VerticalOptions="Center"
+                                 Padding="32">
+                <Label Text="SMS permission required"
+                       FontSize="17"
+                       FontAttributes="Bold"
+                       HorizontalOptions="Center" />
+                <Label Text="Grant Read SMS and Read Contacts permissions to browse your conversations."
+                       TextColor="{StaticResource Gray500}"
+                       HorizontalTextAlignment="Center" />
+            </VerticalStackLayout>
+
+            <!-- Thread list -->
+            <CollectionView x:Name="ThreadList"
+                            IsVisible="False"
+                            SelectionMode="None">
+                <CollectionView.EmptyView>
+                    <Label Text="No SMS conversations found."
+                           TextColor="{StaticResource Gray500}"
+                           HorizontalOptions="Center"
+                           VerticalOptions="Center"
+                           Margin="0,40" />
+                </CollectionView.EmptyView>
+                <CollectionView.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Padding="16,12"
+                              RowDefinitions="Auto,Auto"
+                              ColumnDefinitions="*">
+
+                            <Label Grid.Row="0"
+                                   Text="{Binding DisplayName}"
+                                   FontSize="16"
+                                   FontAttributes="Bold" />
+
+                            <Label Grid.Row="1"
+                                   Text="{Binding Snippet}"
+                                   FontSize="13"
+                                   TextColor="{StaticResource Gray500}"
+                                   MaxLines="1"
+                                   LineBreakMode="TailTruncation"
+                                   Margin="0,2,0,0" />
+
+                            <Grid.GestureRecognizers>
+                                <TapGestureRecognizer Tapped="OnThreadTapped"
+                                                      CommandParameter="{Binding .}" />
+                            </Grid.GestureRecognizers>
+                        </Grid>
+                    </DataTemplate>
+                </CollectionView.ItemTemplate>
+            </CollectionView>
+
+        </Grid>
+    </Grid>
+</ContentPage>

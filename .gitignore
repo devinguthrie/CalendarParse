@@ -103,3 +103,14 @@ calander-parse-test-imgs/
 # Ignore test harness images
 CalendarParse/Resources/Raw/harness*.jpg
 BenchmarkResults/device-captures/*
+
+# Track repo MCP config, keep other VS Code files local
+!.vscode/
+.vscode/*
+!.vscode/mcp.json
+
+# App settings
+appsettings.json
+appsettings.Development.json
+CalendarParse.Api/appsettings.json
+CalendarParse.Api/appsettings.Development.json

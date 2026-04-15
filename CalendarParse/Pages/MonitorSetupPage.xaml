@@ -13,34 +13,132 @@
 
             <!-- Permission status -->
            <Border x:Name="PermissionBanner"
-                  Background="#FFF3CD"
+                  Background="{AppThemeBinding Light=#FFF3CD, Dark=#3A2E00}"
                   Padding="12"
                   StrokeThickness="0"
                   StrokeShape="RoundRectangle 8">
                 <VerticalStackLayout Spacing="8">
-                    <Label Text="⚠ Notification access required"
-                           FontAttributes="Bold" />
-                    <Label Text="CalendarParse needs notification access to detect schedule images in your chat apps." />
+                    <HorizontalStackLayout Spacing="6" VerticalOptions="Center">
+                        <Label Text="&#xE002;"
+                               TextColor="{AppThemeBinding Light=#856404, Dark=#FFD966}"
+                               FontFamily="MaterialIcons"
+                               FontSize="18"
+                               VerticalOptions="Center" />
+                        <Label Text="Notification access required"
+                               FontAttributes="Bold"
+                               TextColor="{AppThemeBinding Light=#856404, Dark=#FFD966}"
+                               VerticalOptions="Center" />
+                    </HorizontalStackLayout>
+                    <Label Text="CalendarParse needs notification access to detect schedule images in your chat apps."
+                           TextColor="{AppThemeBinding Light=#664D03, Dark=#D4A800}" />
                     <Button Text="Open Notification Access Settings"
                             Clicked="OnOpenPermissionSettingsClicked" />
                 </VerticalStackLayout>
                      </Border>
 
-            <!-- App package -->
-            <Label Text="Messaging App (package name)" FontAttributes="Bold" Margin="0,8,0,0" />
-            <Entry x:Name="PackageEntry"
-                   Placeholder="e.g. com.google.android.apps.messaging"
-                   Keyboard="Text"
-                   TextChanged="OnFieldChanged" />
-            <Label Text="Common: com.google.android.apps.messaging · com.whatsapp · org.telegram.messenger"
-                   FontSize="12" TextColor="{StaticResource Gray500}" />
+            <!-- ── App picker ──────────────────────────────────────────── -->
+            <Label Text="Messaging App" FontAttributes="Bold" Margin="0,8,0,0" />
+            <Border x:Name="AppPickerRow"
+                    Padding="14,12"
+                    StrokeThickness="1"
+                    Stroke="{AppThemeBinding Light=#CCCCCC, Dark=#444444}"
+                    StrokeShape="RoundRectangle 8">
+                <Grid ColumnDefinitions="40,*,24" ColumnSpacing="0">
+                    <Image x:Name="SelectedAppIcon"
+                           Grid.Column="0"
+                           WidthRequest="32" HeightRequest="32"
+                           Aspect="AspectFit"
+                           VerticalOptions="Center"
+                           IsVisible="False" />
+                    <Label x:Name="SelectedAppLabel"
+                           Grid.Column="1"
+                           Text="Tap to choose an app →"
+                           TextColor="{StaticResource Gray400}"
+                           VerticalOptions="Center"
+                           Margin="8,0,0,0" />
+                    <Label Grid.Column="2"
+                           Text="›"
+                           FontSize="20"
+                           TextColor="{StaticResource Gray400}"
+                           VerticalOptions="Center" />
+                </Grid>
+                <Border.GestureRecognizers>
+                    <TapGestureRecognizer Tapped="OnSelectAppTapped" />
+                </Border.GestureRecognizers>
+            </Border>
 
-            <!-- Sender name -->
-            <Label Text="Contact or Group Name" FontAttributes="Bold" Margin="0,8,0,0" />
-            <Entry x:Name="SenderEntry"
-                   Placeholder="e.g. Boss, Work Group (leave blank for any)"
-                   Keyboard="Text"
-                   TextChanged="OnFieldChanged" />
+            <!-- ── Contact / thread section (revealed after app is picked) ── -->
+            <VerticalStackLayout x:Name="ContactSection" IsVisible="False" Spacing="8">
+
+                <Label Text="Contact or Group Name" FontAttributes="Bold" Margin="0,8,0,0" />
+
+                <!-- SMS thread picker row (shown when the selected app is an SMS app) -->
+                <Border x:Name="ThreadPickerRow"
+                        IsVisible="False"
+                        Padding="14,12"
+                        StrokeThickness="1"
+                        Stroke="{AppThemeBinding Light=#CCCCCC, Dark=#444444}"
+                        StrokeShape="RoundRectangle 8">
+                    <Grid ColumnDefinitions="*,24">
+                        <Label x:Name="SelectedThreadLabel"
+                               Grid.Column="0"
+                               Text="Tap to choose a conversation →"
+                               TextColor="{StaticResource Gray400}"
+                               VerticalOptions="Center" />
+                        <Label Grid.Column="1"
+                               Text="›"
+                               FontSize="20"
+                               TextColor="{StaticResource Gray400}"
+                               VerticalOptions="Center" />
+                    </Grid>
+                    <Border.GestureRecognizers>
+                        <TapGestureRecognizer Tapped="OnSelectThreadTapped" />
+                    </Border.GestureRecognizers>
+                </Border>
+
+                <!-- Contact name entry + autocomplete (shown for third-party apps) -->
+                <VerticalStackLayout x:Name="ContactSearchSection" IsVisible="False" Spacing="0">
+                    <Entry x:Name="ContactNameEntry"
+                           Placeholder="Search contacts or type a name…"
+                           Keyboard="Text"
+                           TextChanged="OnContactNameChanged" />
+
+                    <!-- Suggestions dropdown -->
+                    <Border x:Name="SuggestionsBorder"
+                            IsVisible="False"
+                            StrokeThickness="1"
+                            Stroke="{AppThemeBinding Light=#CCCCCC, Dark=#444444}"
+                            StrokeShape="RoundRectangle 0,0,8,8"
+                            Padding="0">
+                        <CollectionView x:Name="ContactSuggestions"
+                                        MaximumHeightRequest="220"
+                                        SelectionMode="None">
+                            <CollectionView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Padding="14,10">
+                                        <VerticalStackLayout Spacing="2">
+                                            <Label Text="{Binding DisplayName}" FontSize="15" />
+                                            <Label Text="{Binding PhoneNumber}"
+                                                   FontSize="12"
+                                                   TextColor="{StaticResource Gray500}" />
+                                        </VerticalStackLayout>
+                                        <Grid.GestureRecognizers>
+                                            <TapGestureRecognizer Tapped="OnContactSuggestionTapped"
+                                                                  CommandParameter="{Binding .}" />
+                                        </Grid.GestureRecognizers>
+                                    </Grid>
+                                </DataTemplate>
+                            </CollectionView.ItemTemplate>
+                        </CollectionView>
+                    </Border>
+
+                    <Label Text="Leave blank to monitor all messages from this app."
+                           FontSize="12"
+                           TextColor="{StaticResource Gray500}"
+                           Margin="0,4,0,0" />
+                </VerticalStackLayout>
+
+            </VerticalStackLayout>
 
             <!-- Save -->
             <Button x:Name="SaveBtn"

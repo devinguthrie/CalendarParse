@@ -188,4 +188,123 @@ public class ZoomScrollMathTests
         var colFinal = ZoomScrollMath.CaptureMarkerColumn(intendedScrollX, ViewW, s, ox);
         Assert.Equal(targetColumn, colFinal, Tol);
     }
+
+    // ── Y-axis lock: same math, vertical scroll ──────────────────────────────
+    // CaptureMarkerColumn is used for both X and Y with symmetric arguments.
+    // The Y-lock is captured once at first confirmation and compared on every
+    // subsequent confirmation.  Drift here means bubbles land on the wrong row.
+
+    private const double ViewH   = 600.0; // simulated viewport height
+    private const double RowTol  = 1.5;   // slightly looser: Y has label/debug padding
+
+    [Fact]
+    public void CaptureMarkerRow_ViewportAtTop_ReturnsCorrectRow()
+    {
+        // rendH=2400 > natH*aspect → height-constrained, offsetY=0
+        var (scale, _, offsetY) = ZoomScrollMath.GetImageTransform(NatW, NatH, NatW, NatH);
+        // scrollY=0, marker is at viewport centre Y = 300
+        var row = ZoomScrollMath.CaptureMarkerColumn(0, ViewH, scale, offsetY);
+        var expectedRow = (0 + ViewH / 2.0 - offsetY) / scale;
+        Assert.Equal(expectedRow, row, RowTol);
+    }
+
+    [Fact]
+    public void CaptureMarkerRow_ScrolledToRow1000_ReturnsApprox1000()
+    {
+        // Use a rendered size equal to natural size → scale=1, offsetY=0
+        var (scale, _, offsetY) = ZoomScrollMath.GetImageTransform(NatW, NatH, NatW, NatH);
+        // containerCY = scrollY + viewH/2  =>  scrollY = 1000 - 300 = 700
+        var scrollY = 700.0;
+        var row = ZoomScrollMath.CaptureMarkerColumn(scrollY, ViewH, scale, offsetY);
+        Assert.Equal(1000.0, row, RowTol);
+    }
+
+    [Fact]
+    public void ComputeScrollY_RoundTrips_SameZoom()
+    {
+        var (scale, _, offsetY) = ZoomScrollMath.GetImageTransform(NatW, NatH, NatW, NatH * 2);
+        var originalScrollY = 400.0;
+        var row   = ZoomScrollMath.CaptureMarkerColumn(originalScrollY, ViewH, scale, offsetY);
+        var backY = ZoomScrollMath.ComputeScrollXForMarkerColumn(row, scale, offsetY, ViewH);
+        Assert.Equal(originalScrollY, backY, RowTol);
+    }
+
+    [Fact]
+    public void ComputeScrollY_NeverNegative()
+    {
+        var (scale, _, offsetY) = ZoomScrollMath.GetImageTransform(NatW, NatH, NatW, NatH * 2);
+        var scrollY = ZoomScrollMath.ComputeScrollXForMarkerColumn(0, scale, offsetY, ViewH);
+        Assert.True(scrollY >= 0, $"Expected scrollY >= 0 but got {scrollY}");
+    }
+
+    // Lock label: if user first confirms at row R, every subsequent bubble must
+    // stay within RowYTolerance of R.  The math must survive zoom changes.
+    [Theory]
+    [InlineData(1.0, 2.0,  1000.0)]
+    [InlineData(2.0, 1.0,  1000.0)]
+    [InlineData(1.5, 3.0,  1000.0)]
+    [InlineData(3.0, 1.5,  1000.0)]
+    public void ZoomChange_LockedRow_IsPreserved(
+        double zoom1, double zoom2, double imgRow)
+    {
+        // Use taller rendered sizes so row 1000 is in the reachable scrollable range
+        double baseRendW = 1000;
+        double baseRendH = 3000;
+
+        var (s1, _, oy1) = ZoomScrollMath.GetImageTransform(NatW, NatH, baseRendW * zoom1, baseRendH * zoom1);
+        var scrollY1 = ZoomScrollMath.ComputeScrollXForMarkerColumn(imgRow, s1, oy1, ViewH);
+
+        var (s2, _, oy2) = ZoomScrollMath.GetImageTransform(NatW, NatH, baseRendW * zoom2, baseRendH * zoom2);
+
+        // Capture using PRE-zoom transform
+        var capturedRow = ZoomScrollMath.CaptureMarkerColumn(scrollY1, ViewH, s1, oy1);
+
+        // New scroll using POST-zoom transform
+        var scrollY2 = ZoomScrollMath.ComputeScrollXForMarkerColumn(capturedRow, s2, oy2, ViewH);
+
+        var rowAfter = ZoomScrollMath.CaptureMarkerColumn(scrollY2, ViewH, s2, oy2);
+        Assert.Equal(imgRow, rowAfter, RowTol);
+    }
+
+    [Fact]
+    public void ZoomChange_RapidMultipleSteps_RowPreserved()
+    {
+        double baseRendW = 1000;
+        double baseRendH = 3000;
+        double targetRow = 1000.0;
+
+        double zoom = 1.0;
+        var (s, _, oy) = ZoomScrollMath.GetImageTransform(NatW, NatH, baseRendW * zoom, baseRendH * zoom);
+        double intendedScrollY = ZoomScrollMath.ComputeScrollXForMarkerColumn(targetRow, s, oy, ViewH);
+
+        for (int i = 0; i < 10; i++)
+        {
+            zoom += 0.2;
+            var captured = ZoomScrollMath.CaptureMarkerColumn(intendedScrollY, ViewH, s, oy);
+            var (sNew, _, oyNew) = ZoomScrollMath.GetImageTransform(NatW, NatH, baseRendW * zoom, baseRendH * zoom);
+            intendedScrollY = ZoomScrollMath.ComputeScrollXForMarkerColumn(captured, sNew, oyNew, ViewH);
+            s  = sNew;
+            oy = oyNew;
+        }
+
+        var rowFinal = ZoomScrollMath.CaptureMarkerColumn(intendedScrollY, ViewH, s, oy);
+        Assert.Equal(targetRow, rowFinal, RowTol);
+    }
+
+    // Extra-padding applied during active zoom gesture must be subtracted before
+    // capturing.  Simulate ExtraPad=100 subtracted from scrollY in the page.
+    [Fact]
+    public void CaptureMarkerRow_WithExtraPad_SubtractPadBeforeCapture()
+    {
+        const double pad = 100.0;
+        var (scale, _, offsetY) = ZoomScrollMath.GetImageTransform(NatW, NatH, NatW, NatH);
+
+        // Raw scrollY = 700; after subtracting pad → 600
+        var rowWithPad    = ZoomScrollMath.CaptureMarkerColumn(700.0,       ViewH, scale, offsetY);
+        var rowWithoutPad = ZoomScrollMath.CaptureMarkerColumn(700.0 - pad, ViewH, scale, offsetY);
+
+        Assert.NotEqual(rowWithPad, rowWithoutPad);  // pad must make a difference
+        // Without pad the row is lower (smaller scrollY → smaller row index)
+        Assert.True(rowWithoutPad < rowWithPad);
+    }
 }

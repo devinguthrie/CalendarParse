@@ -8,6 +8,7 @@
 
     <RefreshView x:Name="RefreshContainer"
                  Refreshing="OnRefreshing">
+        <ScrollView>
         <Grid Padding="16"
               RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto">
 
@@ -29,6 +30,15 @@
                     </CollectionView.EmptyView>
                     <CollectionView.ItemTemplate>
                         <DataTemplate x:DataType="models:ScheduleRunSummary">
+                            <SwipeView>
+                                <SwipeView.RightItems>
+                                    <SwipeItems>
+                                        <SwipeItem Text="Delete"
+                                                   BackgroundColor="Red"
+                                                   CommandParameter="{Binding Id}"
+                                                   Invoked="OnDeleteRunInvoked" />
+                                    </SwipeItems>
+                                </SwipeView.RightItems>
                                 <Border Padding="14,10"
                                     Margin="0,0,0,8"
                                     Background="{AppThemeBinding Light=#E3F2FD, Dark=#1A2A3A}"
@@ -43,10 +53,11 @@
                                                        WidthRequest="20" HeightRequest="20"
                                                        VerticalOptions="Center" />
                                     <Label Grid.Column="0"
-                                           Text="⚠"
-                                           FontSize="18"
-                                           IsVisible="{Binding IsError}"
+                                           Text="&#xE002;"
                                            TextColor="OrangeRed"
+                                           FontFamily="MaterialIcons"
+                                           FontSize="20"
+                                           IsVisible="{Binding IsError}"
                                            VerticalOptions="Center" />
 
                                     <VerticalStackLayout Grid.Column="1" Spacing="2" VerticalOptions="Center">
@@ -70,6 +81,7 @@
                                             Background="{StaticResource Primary}" />
                                 </Grid>
                             </Border>
+                            </SwipeView>
                         </DataTemplate>
                     </CollectionView.ItemTemplate>
                 </CollectionView>
@@ -92,36 +104,46 @@
                     </CollectionView.EmptyView>
                     <CollectionView.ItemTemplate>
                         <DataTemplate x:DataType="models:ScheduleRunSummary">
-                            <Border Padding="14,10"
-                                    Margin="0,0,0,8"
-                                    Background="{AppThemeBinding Light=#FFF8E1, Dark=#2C2510}"
-                                    StrokeThickness="0"
-                                    StrokeShape="RoundRectangle 10">
-                                <Border.GestureRecognizers>
-                                    <TapGestureRecognizer
-                                        CommandParameter="{Binding Id}"
-                                        Tapped="OnCorrectionTapped" />
-                                </Border.GestureRecognizers>
-                                <Grid ColumnDefinitions="*,Auto">
-                                    <VerticalStackLayout Grid.Column="0" Spacing="2">
-                                        <Label Text="{Binding DateText}"
-                                               FontAttributes="Bold"
-                                               FontSize="14" />
-                                        <Label Text="{Binding ProgressText}"
-                                               TextColor="{StaticResource Gray500}"
-                                               FontSize="12" />
-                                        <Label Text="{Binding WeekLabel}"
-                                               TextColor="{StaticResource Gray500}"
-                                               FontSize="12"
-                                               IsVisible="{Binding HasWeekLabel}" />
-                                    </VerticalStackLayout>
-                                    <Label Grid.Column="1"
-                                           Text="Resume ›"
-                                           TextColor="{StaticResource Primary}"
-                                           FontSize="13"
-                                           VerticalOptions="Center" />
-                                </Grid>
-                            </Border>
+                            <SwipeView>
+                                <SwipeView.RightItems>
+                                    <SwipeItems>
+                                        <SwipeItem Text="Delete"
+                                                   BackgroundColor="Red"
+                                                   CommandParameter="{Binding Id}"
+                                                   Invoked="OnDeleteRunInvoked" />
+                                    </SwipeItems>
+                                </SwipeView.RightItems>
+                                <Border Padding="14,10"
+                                        Margin="0,0,0,8"
+                                        Background="{AppThemeBinding Light=#FFF8E1, Dark=#2C2510}"
+                                        StrokeThickness="0"
+                                        StrokeShape="RoundRectangle 10">
+                                    <Border.GestureRecognizers>
+                                        <TapGestureRecognizer
+                                            CommandParameter="{Binding Id}"
+                                            Tapped="OnCorrectionTapped" />
+                                    </Border.GestureRecognizers>
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <VerticalStackLayout Grid.Column="0" Spacing="2">
+                                            <Label Text="{Binding DateText}"
+                                                   FontAttributes="Bold"
+                                                   FontSize="14" />
+                                            <Label Text="{Binding ProgressText}"
+                                                   TextColor="{StaticResource Gray500}"
+                                                   FontSize="12" />
+                                            <Label Text="{Binding WeekLabel}"
+                                                   TextColor="{StaticResource Gray500}"
+                                                   FontSize="12"
+                                                   IsVisible="{Binding HasWeekLabel}" />
+                                        </VerticalStackLayout>
+                                        <Label Grid.Column="1"
+                                               Text="Resume ›"
+                                               TextColor="{StaticResource Primary}"
+                                               FontSize="13"
+                                               VerticalOptions="Center" />
+                                    </Grid>
+                                </Border>
+                            </SwipeView>
                         </DataTemplate>
                     </CollectionView.ItemTemplate>
                 </CollectionView>
@@ -143,28 +165,52 @@
                     </CollectionView.EmptyView>
                     <CollectionView.ItemTemplate>
                         <DataTemplate x:DataType="models:ScheduleRunSummary">
+                            <SwipeView>
+                                <SwipeView.RightItems>
+                                    <SwipeItems>
+                                        <SwipeItem Text="Delete"
+                                                   BackgroundColor="Red"
+                                                   CommandParameter="{Binding Id}"
+                                                   Invoked="OnDeleteRunInvoked" />
+                                    </SwipeItems>
+                                </SwipeView.RightItems>
                                 <Border Padding="14,10"
                                     Margin="0,0,0,8"
                                     Background="{AppThemeBinding Light=#F0FFF4, Dark=#0F2018}"
                                     StrokeThickness="0"
                                     StrokeShape="RoundRectangle 10">
-                                <VerticalStackLayout Spacing="2">
-                                    <Label Text="{Binding DateText}"
-                                           FontAttributes="Bold"
-                                           FontSize="14" />
-                                    <Label Text="{Binding ProgressText}"
-                                           TextColor="{StaticResource Gray500}"
-                                           FontSize="12" />
-                                    <Label Text="{Binding WeekLabel}"
-                                           TextColor="{StaticResource Gray500}"
-                                           FontSize="12"
-                                           IsVisible="{Binding HasWeekLabel}" />
-                                </VerticalStackLayout>
-                            </Border>
+                                    <Border.GestureRecognizers>
+                                        <TapGestureRecognizer
+                                            CommandParameter="{Binding Id}"
+                                            Tapped="OnCompletedTapped" />
+                                    </Border.GestureRecognizers>
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <VerticalStackLayout Grid.Column="0" Spacing="2">
+                                            <Label Text="{Binding DateText}"
+                                                   FontAttributes="Bold"
+                                                   FontSize="14" />
+                                            <Label Text="{Binding ProgressText}"
+                                                   TextColor="{StaticResource Gray500}"
+                                                   FontSize="12" />
+                                            <Label Text="{Binding WeekLabel}"
+                                                   TextColor="{StaticResource Gray500}"
+                                                   FontSize="12"
+                                                   IsVisible="{Binding HasWeekLabel}" />
+                                        </VerticalStackLayout>
+                                        <Label Grid.Column="1"
+                                               Text="View ›"
+                                               TextColor="{StaticResource Primary}"
+                                               FontSize="13"
+                                               VerticalOptions="Center" />
+                                    </Grid>
+                                </Border>
+                            </SwipeView>
                         </DataTemplate>
                     </CollectionView.ItemTemplate>
                 </CollectionView>
         </Grid>
+        </ScrollView>
     </RefreshView>
 
 </ContentPage>
+

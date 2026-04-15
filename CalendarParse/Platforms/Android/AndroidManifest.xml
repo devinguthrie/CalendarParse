@@ -19,6 +19,16 @@
 			android:foregroundServiceType="dataSync"
 			android:exported="false" />
 
+		<!-- Handles Yes / No action buttons on the "Schedule image received" notification -->
+		<receiver
+			android:name="calendarparse.platforms.android.ScheduleImageActionReceiver"
+			android:exported="false">
+			<intent-filter>
+				<action android:name="calendarparse.action.MONITOR_YES" />
+				<action android:name="calendarparse.action.MONITOR_NO" />
+			</intent-filter>
+		</receiver>
+
 </application>
 
 	<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -31,5 +41,34 @@
 	<uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
 	<uses-permission android:name="android.permission.READ_CALENDAR" />
 	<uses-permission android:name="android.permission.WRITE_CALENDAR" />
+	<uses-permission android:name="android.permission.READ_SMS" />
+	<uses-permission android:name="android.permission.READ_CONTACTS" />
 	<uses-feature android:name="android.hardware.camera" android:required="false" />
+
+	<!--
+	    Android 11+ Package Visibility (API 30+): without <queries> the PackageManager
+	    returns nothing for QueryIntentActivities and throws NameNotFoundException for
+	    GetPackageInfo on every package not in this list.
+	-->
+	<queries>
+		<!-- Discover native SMS apps via intent -->
+		<intent>
+			<action android:name="android.intent.action.SENDTO" />
+			<data android:scheme="smsto" />
+		</intent>
+
+		<!-- Well-known third-party messaging apps -->
+		<package android:name="com.whatsapp" />
+		<package android:name="com.whatsapp.w4b" />
+		<package android:name="org.telegram.messenger" />
+		<package android:name="org.thoughtcrime.securesms" />
+		<package android:name="com.facebook.orca" />
+		<package android:name="com.facebook.mlite" />
+		<package android:name="com.viber.voip" />
+		<package android:name="com.discord" />
+		<package android:name="com.instagram.android" />
+		<package android:name="jp.naver.line.android" />
+		<package android:name="com.kakao.talk" />
+		<package android:name="com.snapchat.android" />
+	</queries>
 </manifest>

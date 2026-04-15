@@ -177,6 +177,15 @@ public class ScheduleHistoryDb : DbContext
         await SaveChangesWithRetryAsync(ct);
     }
 
+    /// <summary>Deletes a run and saves. No-op if the run does not exist.</summary>
+    public async Task DeleteRunAsync(int runId, CancellationToken ct = default)
+    {
+        var run = await ScheduleRuns.FindAsync([runId], ct);
+        if (run is null) return;
+        ScheduleRuns.Remove(run);
+        await SaveChangesWithRetryAsync(ct);
+    }
+
     /// <summary>Returns all runs currently in Processing state (for resuming polls on app restart).</summary>
     public async Task<List<ScheduleRun>> GetProcessingRunsAsync(CancellationToken ct = default)
         => await ScheduleRuns

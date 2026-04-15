@@ -3,6 +3,7 @@ using CalendarParse.Data;
 using CalendarParse.Models;
 using CalendarParse.Pages;
 using CalendarParse.Services;
+using Sentry;
 
 namespace CalendarParse
 {
@@ -18,6 +19,8 @@ namespace CalendarParse
         private readonly ApiClient          _api;
         private readonly IJobPollingService _pollingService;
         private FileResult?                 _pendingPhoto;
+        // Raw bytes loaded from the notification-monitor flow (no FileResult available)
+        private byte[]?                     _pendingImageBytes;
 
         public MainPage(
             IServiceProvider services,
@@ -33,6 +36,7 @@ namespace CalendarParse
 
 #if DEBUG
             OverlayHarnessBtn.IsVisible = true;
+            SentryTestBtn.IsVisible = true;
 #endif
         }
 
@@ -41,6 +45,19 @@ namespace CalendarParse
             base.OnAppearing();
             JobEvents.JobFinished += OnJobFinished;
             await RefreshActiveJobCardAsync();
+            await AutoPopulateSearchNameAsync();
+        }
+
+        private async Task AutoPopulateSearchNameAsync()
+        {
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(SearchEntry.Text)) return;
+                var prefs = await _db.GetPreferencesAsync();
+                if (!string.IsNullOrWhiteSpace(prefs.EmployeeName))
+                    SearchEntry.Text = prefs.EmployeeName;
+            }
+            catch { /* non-critical */ }
         }
 
         protected override void OnDisappearing()
@@ -60,11 +77,14 @@ namespace CalendarParse
             try
             {
                 var processing = await _db.GetProcessingRunsAsync();
-                ActiveJobCard.IsVisible = processing.Count > 0;
+                var hasProcessing = processing.Count > 0;
+                ActiveJobCard.IsVisible        = hasProcessing;
+                ProcessingTitleLabel.IsVisible = hasProcessing;
             }
             catch
             {
-                ActiveJobCard.IsVisible = false;
+                ActiveJobCard.IsVisible        = false;
+                ProcessingTitleLabel.IsVisible = false;
             }
         }
 
@@ -95,8 +115,32 @@ namespace CalendarParse
 
         private async void OnProcessClicked(object? sender, EventArgs e)
         {
+            if (_pendingImageBytes is { } bytes)
+            {
+                await SubmitBytesAsync(bytes);
+                return;
+            }
             if (_pendingPhoto is null) return;
             await SubmitPhotoAsync(_pendingPhoto);
+        }
+
+        /// <summary>
+        /// Called by MainActivity when the user taps the notification body (load + banner,
+        /// user presses Process) or the Yes action button (auto-process).
+        /// </summary>
+        public async Task LoadMonitorImageAsync(byte[] bytes, bool autoProcess)
+        {
+            _pendingImageBytes         = bytes;
+            _pendingPhoto              = null;
+            FileNameLabel.Text         = "Image from monitored conversation";
+            ProcessBtn.IsEnabled       = true;
+            MonitorBannerBorder.IsVisible = true;
+
+            System.Diagnostics.Debug.WriteLine(
+                $"[MainPage] LoadMonitorImageAsync autoProcess={autoProcess} bytes={bytes.Length:N0}");
+
+            if (autoProcess)
+                await SubmitBytesAsync(bytes);
         }
 
         private async Task SubmitPhotoAsync(FileResult photo)
@@ -104,14 +148,11 @@ namespace CalendarParse
             await using var stream = await photo.OpenReadAsync();
             using var ms = new MemoryStream();
             await stream.CopyToAsync(ms);
-            var imageBytes = ms.ToArray();
+            await SubmitBytesAsync(ms.ToArray());
+        }
 
-            // Show the popup before any network work
-            await DisplayAlertAsync(
-                "Processing your schedule",
-                "This takes about 2 minutes. You'll get a notification when it's ready.",
-                "OK");
-
+        private async Task SubmitBytesAsync(byte[] imageBytes)
+        {
             ProcessBtn.IsEnabled  = false;
             StatusLabel.Text      = "Submitting…";
             StatusLabel.IsVisible = true;
@@ -136,12 +177,15 @@ namespace CalendarParse
                 var runId = await _db.CreateProcessingRunAsync(jobId, imagePath);
                 _pollingService.StartPolling(runId, jobId);
 
-                ActiveJobCard.IsVisible = true;
-                StatusLabel.Text        = "Submitted!";
+                ActiveJobCard.IsVisible        = true;
+                ProcessingTitleLabel.IsVisible = true;
+                StatusLabel.Text               = "Submitted! Processing takes ~2 min.";
 
-                _pendingPhoto        = null;
-                ProcessBtn.IsEnabled = false;
-                FileNameLabel.Text   = "No file selected";
+                _pendingPhoto              = null;
+                _pendingImageBytes         = null;
+                ProcessBtn.IsEnabled       = false;
+                FileNameLabel.Text         = "No file selected";
+                MonitorBannerBorder.IsVisible = false;
             }
             catch (Exception ex)
             {
@@ -174,6 +218,12 @@ namespace CalendarParse
         {
             if (Shell.Current is { } shell)
                 await shell.GoToAsync("//HistoryPage");
+        }
+
+        private void OnSentryTestClicked(object? sender, EventArgs e)
+        {
+            SentrySdk.CaptureMessage("Hello from CalendarParse MAUI!", SentryLevel.Info);
+            DisplayAlert("Sentry", "Test event sent — check your Sentry dashboard.", "OK");
         }
 
         private async void OnOpenOverlayHarnessClicked(object? sender, EventArgs e)

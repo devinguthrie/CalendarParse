@@ -60,10 +60,10 @@ public static class OverlayVisibilityLogic
         // Position flow: confirmed position always shows (green confirmed marker).
         if (state.PositionState == PositionState.Confirmed) return true;
 
-        // Canvas border only during the time-confirm step (before time is confirmed).
-        // Once time is confirmed (location-review or position-editing), PositionTargetRect
-        // is the sole visual marker — no canvas border here.
-        return isSelected && state.TimeState != TimeState.Confirmed;
+        // PositionTargetRect is the visual indicator across ALL steps of the opt-in flow
+        // (both time-confirm and location-review). Never draw a canvas border here —
+        // doing so would produce two simultaneous overlays on the same bubble.
+        return false;
     }
 
     /// <summary>

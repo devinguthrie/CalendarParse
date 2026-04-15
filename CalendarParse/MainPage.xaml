@@ -4,22 +4,22 @@
              x:Class="CalendarParse.MainPage"
              Title="CalendarParse">
 
-    <Grid RowDefinitions="Auto,Auto,*" Padding="16">
+    <Grid RowDefinitions="Auto,Auto,Auto,*" Padding="16">
 
         <!-- ── Controls ───────────────────────────────────────── -->
         <VerticalStackLayout Grid.Row="0" Spacing="12">
 
             <HorizontalStackLayout Spacing="12" HorizontalOptions="Center">
                 <Button x:Name="CameraBtn"
-                        Text="📷  Take Photo"
+                        Text="Take Photo"
                         Clicked="OnCameraClicked"
                         HorizontalOptions="Fill" />
                 <Button x:Name="ImportBtn"
-                        Text="🖼  Import"
+                        Text="Import"
                         Clicked="OnImportClicked"
                         HorizontalOptions="Fill" />
                 <Button x:Name="ProcessBtn"
-                        Text="⚙  Process"
+                        Text="Process"
                         Clicked="OnProcessClicked"
                         IsEnabled="False"
                         HorizontalOptions="Fill" />
@@ -49,6 +49,10 @@
                        Placeholder="Filter by employee name"
                        ClearButtonVisibility="WhileEditing" />
             </Grid>
+            <Label Text="Name auto-filled from Settings. Tap Settings to change."
+                   FontSize="11"
+                   TextColor="{StaticResource Gray500}"
+                   Margin="0,-4,0,0" />
 
             <ActivityIndicator x:Name="Spinner"
                                IsRunning="False"
@@ -62,17 +66,45 @@
                    HorizontalOptions="Center"
                    IsVisible="False" />
 
+            <!-- Shown only when entering from the notification-monitor UX flow -->
+            <Border x:Name="MonitorBannerBorder"
+                    IsVisible="False"
+                    Background="{AppThemeBinding Light=#E8F5E9, Dark=#1B2E1C}"
+                    StrokeThickness="0"
+                    StrokeShape="RoundRectangle 8"
+                    Padding="10,6">
+                <Label Text="Process this picture from the monitored conversation?"
+                       FontSize="12"
+                       TextColor="{AppThemeBinding Light=#2E7D32, Dark=#81C784}"
+                       HorizontalOptions="Center" />
+            </Border>
+
                 <Button x:Name="OverlayHarnessBtn"
                     AutomationId="OverlayHarnessBtn"
                     Text="Open Overlay Harness"
                     Clicked="OnOpenOverlayHarnessClicked"
                     IsVisible="False"
                     Background="{StaticResource Gray300}" />
+                <Button x:Name="SentryTestBtn"
+                    AutomationId="SentryTestBtn"
+                    Text="Test Sentry"
+                    Clicked="OnSentryTestClicked"
+                    IsVisible="False"
+                    Background="{StaticResource Gray300}" />
         </VerticalStackLayout>
+
+        <!-- ── Currently Processing section title ───────────── -->
+        <Label x:Name="ProcessingTitleLabel"
+               Grid.Row="1"
+               Text="Currently Processing"
+               FontAttributes="Bold"
+               FontSize="14"
+               IsVisible="False"
+               Margin="0,12,0,4" />
 
         <!-- ── Active job card ───────────────────────────────── -->
         <Border x:Name="ActiveJobCard"
-                Grid.Row="1"
+                Grid.Row="2"
                 IsVisible="False"
                 Padding="14,10"
                 Margin="0,8,0,0"
@@ -104,7 +136,7 @@
             </Border>
 
         <!-- ── Results ───────────────────────────────────────── -->
-        <ScrollView Grid.Row="2" Margin="0,12,0,0">
+        <ScrollView Grid.Row="3" Margin="0,12,0,0">
             <Label x:Name="ResultLabel"
                    Text=""
                    FontFamily="monospace"

@@ -16,10 +16,20 @@ namespace CalendarParse
             var builder = MauiApp.CreateBuilder();
             builder
                 .UseMauiApp<App>()
+                .UseSentry(options =>
+                {
+                    // Sentry DSNs for mobile clients are public keys — safe to embed.
+                    // Replace the empty string with your Android project DSN from sentry.io.
+                    options.Dsn = "https://37ee477d7239b7216be2219232cc73b7@o4511129582305280.ingest.us.sentry.io/4511216792043520";
+                    options.Debug = false;
+                    options.TracesSampleRate = 0.2;
+                    options.AutoSessionTracking = true;
+                })
                 .ConfigureFonts(fonts =>
                 {
                     fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular");
                     fonts.AddFont("OpenSans-Semibold.ttf", "OpenSansSemibold");
+                    fonts.AddFont("MaterialSymbols.ttf", "MaterialIcons");
                 });
 
             // ── Data layer ─────────────────────────────────────────────────
@@ -43,6 +53,8 @@ namespace CalendarParse
             // callers must handle null when the user hasn't granted notification access.
             builder.Services.AddSingleton<ISmsMonitorService>(_ =>
                 AndroidNotificationMonitor.Instance!);
+
+            builder.Services.AddSingleton<IMessagingAppPickerService, Platforms.Android.AndroidMessagingAppPickerService>();
 
             // Job polling via Android Foreground Service
             builder.Services.AddSingleton<IJobPollingService, Platforms.Android.AndroidJobPollingService>();
@@ -125,8 +137,16 @@ namespace CalendarParse
 
         private static async Task AddColumnIfMissingAsync(ScheduleHistoryDb db, string alterSql)
         {
-            try   { await db.Database.ExecuteSqlRawAsync(alterSql); }
-            catch { /* column already exists — safe to ignore */ }
+            // Check via PRAGMA before ALTER TABLE so no exception is ever thrown.
+            // parts: ALTER(0) TABLE(1) <table>(2) ADD(3) COLUMN(4) <col>(5) ...
+            var parts  = alterSql.Split(' ');
+            var table  = parts[2];
+            var column = parts[5];
+            var exists = await db.Database
+                .SqlQuery<int>($"SELECT COUNT(*) AS Value FROM pragma_table_info({table}) WHERE name={column}")
+                .SingleAsync();
+            if (exists == 0)
+                await db.Database.ExecuteSqlRawAsync(alterSql);
         }
 
         /// <summary>

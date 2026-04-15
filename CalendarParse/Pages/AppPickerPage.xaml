@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage
+    x:Class="CalendarParse.Pages.AppPickerPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    Title="Select Messaging App">
+
+    <ContentPage.ToolbarItems>
+        <ToolbarItem Text="Cancel" Clicked="OnCancelClicked" />
+    </ContentPage.ToolbarItems>
+
+    <Grid RowDefinitions="Auto,*">
+
+        <SearchBar x:Name="SearchBar"
+                   Grid.Row="0"
+                   Placeholder="Search apps…"
+                   TextChanged="OnSearchChanged" />
+
+        <Grid Grid.Row="1">
+
+            <!-- Loading spinner -->
+            <ActivityIndicator x:Name="Spinner"
+                               IsRunning="True"
+                               IsVisible="True"
+                               VerticalOptions="Center"
+                               HorizontalOptions="Center" />
+
+            <!-- App list -->
+            <CollectionView x:Name="AppList"
+                            IsVisible="False"
+                            SelectionMode="None">
+                <CollectionView.EmptyView>
+                    <Label Text="No apps found."
+                           TextColor="{StaticResource Gray500}"
+                           HorizontalOptions="Center"
+                           VerticalOptions="Center"
+                           Margin="0,40" />
+                </CollectionView.EmptyView>
+                <CollectionView.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Padding="16,10"
+                              ColumnDefinitions="44,*,Auto"
+                              ColumnSpacing="0">
+
+                            <!-- App icon -->
+                            <Image Grid.Column="0"
+                                   Source="{Binding Icon}"
+                                   WidthRequest="36"
+                                   HeightRequest="36"
+                                   Aspect="AspectFit"
+                                   VerticalOptions="Center" />
+
+                            <!-- App label -->
+                            <Label Grid.Column="1"
+                                   Text="{Binding Label}"
+                                   FontSize="16"
+                                   VerticalOptions="Center"
+                                   Margin="10,0,4,0" />
+
+                            <!-- SMS badge -->
+                            <Border Grid.Column="2"
+                                    IsVisible="{Binding SupportsSmsThreads}"
+                                    BackgroundColor="{AppThemeBinding Light=#E8F0FE, Dark=#1A2D5A}"
+                                    StrokeThickness="0"
+                                    StrokeShape="RoundRectangle 4"
+                                    Padding="6,2"
+                                    VerticalOptions="Center">
+                                <Label Text="SMS"
+                                       FontSize="11"
+                                       FontAttributes="Bold"
+                                       TextColor="{AppThemeBinding Light=#1A73E8, Dark=#8AB4F8}" />
+                            </Border>
+
+                            <Grid.GestureRecognizers>
+                                <TapGestureRecognizer Tapped="OnAppTapped"
+                                                      CommandParameter="{Binding .}" />
+                            </Grid.GestureRecognizers>
+                        </Grid>
+                    </DataTemplate>
+                </CollectionView.ItemTemplate>
+            </CollectionView>
+
+        </Grid>
+    </Grid>
+</ContentPage>

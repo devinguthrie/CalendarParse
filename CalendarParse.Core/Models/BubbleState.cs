@@ -28,6 +28,8 @@ public enum PositionState
 ///   Pending  → BeginEditPosition → Editing
 ///   Editing  → ConfirmPosition   → Confirmed
 ///   Confirmed→ BeginEditPosition → Editing
+///   Editing  → CancelEditPosition (from Pending) → Pending + TimeState→Pending
+///   Editing  → CancelEditPosition (from Confirmed) → Confirmed (TimeState unchanged)
 ///
 ///   FULLY_CONFIRMED = TimeState==Confirmed AND PositionState∈{Confirmed,Skipped}
 /// </summary>
@@ -36,6 +38,10 @@ public class BubbleState
     public ShiftData    Shift         { get; init; } = null!;
     public TimeState    TimeState     { get; private set; } = TimeState.Pending;
     public PositionState PositionState { get; private set; } = PositionState.Skipped;
+
+    // Remembers the PositionState that preceded the current Editing state so
+    // CancelEditPosition can restore it correctly (and knows whether to reset time).
+    private PositionState? _positionStateBeforeEditing;
 
     /// <summary>Corrected time value — may be edited by the user.</summary>
     public string       DisplayTime   { get; private set; } = string.Empty;
@@ -61,7 +67,10 @@ public class BubbleState
 
         // Skip the review-only "Pending" step — go straight to interactive edit.
         if (PositionState == PositionState.Pending)
+        {
+            _positionStateBeforeEditing = PositionState.Pending;
             PositionState = PositionState.Editing;
+        }
     }
 
     /// <summary>Thumbs down / edit icon: open the text editor.</summary>
@@ -77,6 +86,13 @@ public class BubbleState
         if (TimeState != TimeState.Editing) return;
         DisplayTime = editedText.Trim();
         TimeState   = TimeState.Confirmed;
+
+        // Mirror ConfirmTime: skip the review-only Pending step and go straight to interactive edit.
+        if (PositionState == PositionState.Pending)
+        {
+            _positionStateBeforeEditing = PositionState.Pending;
+            PositionState = PositionState.Editing;
+        }
     }
 
     /// <summary>Dismiss button: cancel editing, return to Pending.</summary>
@@ -92,21 +108,39 @@ public class BubbleState
     public void BeginEditPosition()
     {
         if (PositionState is PositionState.Pending or PositionState.Confirmed)
+        {
+            _positionStateBeforeEditing = PositionState;
             PositionState = PositionState.Editing;
+        }
     }
 
     /// <summary>User dragged the bubble to the correct position and tapped thumbs up.</summary>
     public void ConfirmPosition()
     {
         if (PositionState is PositionState.Pending or PositionState.Editing)
+        {
+            _positionStateBeforeEditing = null;
             PositionState = PositionState.Confirmed;
+        }
     }
 
-    /// <summary>Exit position edit mode without confirming.</summary>
+    /// <summary>
+    /// Exit position edit mode without confirming.
+    /// If editing started from a Pending position (first-time edit), also resets
+    /// TimeState back to Pending so the user returns to the time-confirmation step.
+    /// If editing started from a Confirmed position (re-edit), restores Confirmed.
+    /// </summary>
     public void CancelEditPosition()
     {
-        if (PositionState == PositionState.Editing)
-            PositionState = PositionState.Pending;
+        if (PositionState != PositionState.Editing) return;
+
+        var prev = _positionStateBeforeEditing ?? PositionState.Pending;
+        _positionStateBeforeEditing = null;
+        PositionState = prev;
+
+        // First-time edit — cancel means "I want to reconsider time too."
+        if (prev == PositionState.Pending)
+            TimeState = TimeState.Pending;
     }
 
     /// <summary>Sets position state directly — used when applying the opt-in preference.</summary>

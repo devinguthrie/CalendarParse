@@ -14,6 +14,7 @@
               ColumnDefinitions="Auto,*,Auto"
               IsVisible="False">
             <Button x:Name="PrevBubbleBtn"
+                AutomationId="PrevBubbleBtn"
                 Grid.Column="0"
                 Text="◀"
                 WidthRequest="40"
@@ -22,6 +23,7 @@
                 Clicked="OnPrevBubbleClicked" />
 
             <Label x:Name="HeaderProgressLabel"
+               AutomationId="HeaderProgressLabel"
                Grid.Column="1"
                HorizontalOptions="Center"
                VerticalOptions="Center"
@@ -30,6 +32,7 @@
                Text="0/0 confirmed" />
 
             <Button x:Name="NextBubbleBtn"
+                AutomationId="NextBubbleBtn"
                 Grid.Column="2"
                 Text="▶"
                 WidthRequest="40"
@@ -94,6 +97,7 @@
                         AutomationId="ImageScrollView"
                         Scrolled="OnImageScrollViewScrolled"
                         Orientation="Both">
+                <Grid x:Name="ScrollContent">
                 <Grid x:Name="ImageContainer">
                     <Grid.GestureRecognizers>
                         <!-- Pinch on inner Grid — ScrollView on Android intercepts multi-touch
@@ -113,6 +117,7 @@
                                   VerticalOptions="Fill"
                                   InputTransparent="True" />
 
+                </Grid>
                 </Grid>
             </ScrollView>
 
@@ -204,14 +209,17 @@
                                  VerticalOptions="Center"
                                  Spacing="0">
                 <Label x:Name="PositionTargetLabel"
+                       AutomationId="PositionTargetLabel"
                        IsVisible="False"
-                       HorizontalOptions="Center"
+                       HorizontalOptions="Fill"
                        HorizontalTextAlignment="Center"
                        TextColor="White"
                        FontSize="12"
                        Padding="6,2"
+                       WidthRequest="200"
                        BackgroundColor="#CC000000" />
                 <Border x:Name="PositionTargetRect"
+                        AutomationId="PositionTargetRect"
                         IsVisible="False"
                         WidthRequest="200"
                         HeightRequest="55"
@@ -232,44 +240,117 @@
 
             <!-- Bubble detail panel — shown when a bubble is tapped -->
                 <Border x:Name="BubbleDetailPanel"
+                    AutomationId="BubbleDetailPanel"
                     IsVisible="False"
                     VerticalOptions="End"
                     Margin="8"
                     Padding="16"
-                    StrokeThickness="0"
+                    Stroke="White"
+                    StrokeThickness="2"
                     StrokeShape="RoundRectangle 12"
                     Background="{AppThemeBinding Light=White, Dark=#1E1E1E}"
                     Shadow="{Shadow Brush=Black, Offset='0,4', Radius=8, Opacity=0.2}">
                 <VerticalStackLayout Spacing="12">
-                    <Label x:Name="BubbleEmployeeLabel" FontAttributes="Bold" FontSize="15" />
-                    <Label x:Name="BubbleDateLabel" TextColor="{StaticResource Gray500}" />
+                    <!-- Date confirmation step (shown before bubble-by-bubble confirm) -->
+                    <VerticalStackLayout x:Name="DateConfirmView" IsVisible="False" Spacing="8">
+                        <Label Text="Confirm the first day of this schedule week:"
+                               FontSize="13"
+                               TextColor="{StaticResource Gray500}"
+                               HorizontalOptions="Center"
+                               HorizontalTextAlignment="Center" />
+                        <Label x:Name="DateConfirmDateLabel"
+                               FontSize="20"
+                               FontAttributes="Bold"
+                               HorizontalOptions="Center"
+                               TextColor="{StaticResource Primary}" />
+                        <DatePicker x:Name="DateConfirmPicker"
+                                    Format="dddd, MMMM d"
+                                    HorizontalOptions="Center"
+                                    IsVisible="False" />
+                        <HorizontalStackLayout Spacing="12" HorizontalOptions="Center">
+                            <Button x:Name="DateConfirmOkBtn"
+                                    Text="Confirm Date"
+                                    Clicked="OnDateConfirmOkClicked"
+                                    Background="{StaticResource Primary}"
+                                    TextColor="White" />
+                            <Button x:Name="DateConfirmEditBtn"
+                                    Text="Change"
+                                    Clicked="OnDateConfirmEditClicked"
+                                    Background="{StaticResource Gray300}" />
+                        </HorizontalStackLayout>
+                        <HorizontalStackLayout x:Name="DatePickerActions"
+                                               Spacing="12"
+                                               HorizontalOptions="Center"
+                                               IsVisible="False">
+                            <Button Text="Save"
+                                    Clicked="OnDateConfirmSaveClicked"
+                                    Background="Green"
+                                    TextColor="White" />
+                            <Button Text="Cancel"
+                                    Clicked="OnDateConfirmCancelClicked"
+                                    Background="{StaticResource Gray300}" />
+                        </HorizontalStackLayout>
+                    </VerticalStackLayout>
 
-                    <!-- Read-only time display (shown when not editing) -->
-                    <Label x:Name="BubbleTimeLabel"
-                           TextColor="{StaticResource Gray500}"
-                           FontSize="14" />
+                    <!-- Date above, time below — no wrapping -->
+                    <VerticalStackLayout Spacing="2">
+                        <Label x:Name="BubbleDateLabel"
+                               AutomationId="BubbleDateLabel"
+                               TextColor="{StaticResource Gray500}"
+                               FontAttributes="Bold"
+                               FontSize="12" />
+                        <Label x:Name="BubbleTimeLabel"
+                               AutomationId="BubbleTimeLabel"
+                               TextColor="{StaticResource Primary}"
+                               FontSize="15"
+                               FontAttributes="Bold"
+                               LineBreakMode="NoWrap" />
+                    </VerticalStackLayout>
 
                     <!-- Editable time entry (shown only when editing) -->
                     <Entry x:Name="BubbleTimeEntry"
+                           AutomationId="BubbleTimeEntry"
                            Placeholder="e.g. 9:00-5:00"
                            Keyboard="Text"
                            IsVisible="False" />
 
+                    <!-- Time picker row (shown only when editing) -->
+                    <Grid x:Name="TimePickerPanel"
+                          IsVisible="False"
+                          ColumnDefinitions="Auto,Auto,Auto"
+                          ColumnSpacing="4"
+                          HorizontalOptions="Center">
+                        <TimePicker x:Name="StartTimePicker"
+                                    Grid.Column="0"
+                                    Format="h:mm tt"
+                                    VerticalOptions="Center" />
+                        <Label Grid.Column="1"
+                               Text="–"
+                               FontSize="18"
+                               VerticalOptions="Center"
+                               Margin="4,0" />
+                        <TimePicker x:Name="EndTimePicker"
+                                    Grid.Column="2"
+                                    Format="h:mm tt"
+                                    VerticalOptions="Center" />
+                    </Grid>
+
                     <HorizontalStackLayout x:Name="NormalActions"
+                                           AutomationId="NormalActions"
                                            Spacing="12" HorizontalOptions="Center">
                         <Button x:Name="ThumbsUpBtn"
                             AutomationId="ConfirmActionBtn"
-                                Text="👍 Confirm"
+                                Text="Confirm"
                                 Clicked="OnThumbsUpClicked"
                                 Background="{StaticResource Primary}" />
                         <Button x:Name="ThumbsDownBtn"
                             AutomationId="EditActionBtn"
-                                Text="✏️ Edit"
+                                Text="Edit"
                                 Clicked="OnThumbsDownClicked"
                                 Background="{StaticResource Gray300}" />
                         <Button x:Name="EditPositionBtn"
                             AutomationId="EditPositionActionBtn"
-                                Text="📍 Edit Position"
+                                Text="Edit Position"
                                 Clicked="OnEditPositionClicked"
                                 IsVisible="False"
                                 Background="{StaticResource Gray300}" />
@@ -277,30 +358,51 @@
 
                     <!-- Shown only during Edit Position mode -->
                     <HorizontalStackLayout x:Name="PositionEditActions"
+                                           AutomationId="PositionEditActions"
                                            Spacing="12"
                                            HorizontalOptions="Center"
                                            IsVisible="False">
-                        <Button Text="✅ Save Position"
+                        <Button Text="Save Position"
                                 AutomationId="SavePositionBtn"
                                 Clicked="OnPositionSaveClicked"
                                 Background="{StaticResource Primary}" />
-                        <Button Text="✗ Cancel"
+                        <Button Text="Cancel"
                                 AutomationId="CancelPositionBtn"
                                 Clicked="OnPositionCancelClicked"
                                 Background="{StaticResource Gray300}" />
                     </HorizontalStackLayout>
 
                     <HorizontalStackLayout x:Name="EditActions"
-                                           Spacing="12"
+                                           AutomationId="EditActions"
+                                           Spacing="8"
                                            HorizontalOptions="Center"
                                            IsVisible="False">
+                        <Button Text="Blank"
+                                x:Name="BlankTimeBtn"
+                                AutomationId="BlankTimeBtn"
+                                Clicked="OnBlankTimeClicked"
+                                Background="{StaticResource Gray300}" />
+                        <Button Text="x"
+                                x:Name="XTimeBtn"
+                                AutomationId="XTimeBtn"
+                                Clicked="OnXTimeClicked"
+                                Background="{StaticResource Gray300}" />
+                        <Button Text="Other"
+                                x:Name="OtherTimeBtn"
+                                AutomationId="OtherTimeBtn"
+                                Clicked="OnOtherTimeClicked"
+                                Background="{StaticResource Gray300}" />
                         <Button Text="Save"
+                                x:Name="EditSaveBtn"
+                                AutomationId="EditSaveBtn"
                                 Clicked="OnEditSaveClicked"
-                            Background="Green"
+                                Background="Green"
                                 TextColor="White" />
                         <Button Text="Dismiss"
+                                x:Name="EditDismissBtn"
+                                AutomationId="EditDismissBtn"
                                 Clicked="OnEditDismissClicked"
-                            Background="{StaticResource Gray300}" />
+                                Background="{StaticResource Gray300}" />
                     </HorizontalStackLayout>
                 </VerticalStackLayout>
                     </Border>
@@ -314,7 +416,7 @@
               WidthRequest="52"
               HorizontalOptions="End"
               VerticalOptions="Fill"
-              Padding="5,40,5,100"
+              Padding="5,20,5,175"
               IsVisible="False"
               RowDefinitions="*,Auto">
             <!-- Wrapper fills the * row; background lives here so hiding it removes the grey panel -->
@@ -327,7 +429,7 @@
                 <Slider x:Name="ZoomSlider"
                         AutomationId="ZoomSlider"
                         Minimum="1"
-                        Maximum="4"
+                        Maximum="8"
                         Value="1"
                         Rotation="-90"
                         WidthRequest="180"
@@ -342,11 +444,12 @@
             <Button x:Name="ZoomHideBtn"
                     AutomationId="ZoomHideBtn"
                     Grid.Row="1"
-                    Text="🙈"
                     WidthRequest="44"
                     HeightRequest="44"
                     HorizontalOptions="Center"
-                    Padding="0"
+                    Text="&#xE8F4;"
+                    FontFamily="MaterialIcons"
+                    FontSize="20"
                     Clicked="OnZoomHideClicked"
                     Background="{StaticResource Gray300}" />
         </Grid>
@@ -410,7 +513,7 @@
             <Button x:Name="LockPanBtn"
                     AutomationId="LockPanBtn"
                     Grid.Row="0" Grid.Column="1"
-                    Text="🔓 Lock Pan"
+                    Text="Lock Pan"
                     Clicked="OnLockPanClicked"
                     IsVisible="False"
                     Margin="4,0"
@@ -420,7 +523,8 @@
             <Button x:Name="ProcessScheduleBtn"
                     AutomationId="ProcessScheduleBtn"
                     Grid.Row="0" Grid.Column="2"
-                    Text="Process Schedule"
+                    Text="Schedule Summary"
+                    ContentLayout="Right, 8"
                     IsEnabled="False"
                     Clicked="OnProcessScheduleClicked" />
 

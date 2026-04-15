@@ -6,8 +6,14 @@ using CalendarParse.Cli.Services;
 using CalendarParse.Models;
 using CalendarParse.Services;
 using Microsoft.EntityFrameworkCore;
+using Sentry;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// ── Sentry ────────────────────────────────────────────────────────────────────
+// DSN and options are read from the "Sentry" section in appsettings.json.
+// Set Sentry:Dsn in appsettings.Development.json or via env var SENTRY_DSN.
+builder.WebHost.UseSentry();
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 var port          = builder.Configuration.GetValue<int>("CalendarParse:Port", 5150);
@@ -58,7 +64,8 @@ using (var scope = app.Services.CreateScope())
 app.Use(async (context, next) =>
 {
     if (context.Request.Path.StartsWithSegments("/health") ||
-        context.Request.Path.StartsWithSegments("/auth"))
+        context.Request.Path.StartsWithSegments("/auth") ||
+        context.Request.Path.StartsWithSegments("/sentry-test"))
     {
         await next(context);
         return;
@@ -76,6 +83,15 @@ app.Use(async (context, next) =>
 });
 
 // ── Endpoints ─────────────────────────────────────────────────────────────────
+
+// GET /sentry-test — DEBUG only; sends a test message + exception to Sentry
+app.MapGet("/sentry-test", () =>
+{
+    SentrySdk.CaptureMessage("Hello from CalendarParse API!", SentryLevel.Info);
+    try { throw new InvalidOperationException("Sentry test exception from /sentry-test endpoint."); }
+    catch (Exception ex) { SentrySdk.CaptureException(ex); }
+    return Results.Ok(new { sent = true, message = "Test event sent to Sentry — check your dashboard." });
+});
 
 // GET /health — unauthenticated; mobile app checks this before showing share prompt
 app.MapGet("/health", async (IHttpClientFactory httpClientFactory) =>

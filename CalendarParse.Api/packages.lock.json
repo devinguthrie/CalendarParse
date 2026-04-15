@@ -14,6 +14,15 @@
           "SQLitePCLRaw.core": "2.1.10"
         }
       },
+      "Sentry.AspNetCore": {
+        "type": "Direct",
+        "requested": "[6.3.1, )",
+        "resolved": "6.3.1",
+        "contentHash": "t5vozmTQ5pp+jT1OCKbFr/FpO793KeAxO2YMr63IP588kni4GNpXNW1377lZLIYWy2dFNyZJbJKH/VkEB7JIbA==",
+        "dependencies": {
+          "Sentry.Extensions.Logging": "6.3.1"
+        }
+      },
       "Emgu.CV": {
         "type": "Transitive",
         "resolved": "4.12.0.5764",
@@ -95,6 +104,19 @@
         "type": "Transitive",
         "resolved": "9.0.3",
         "contentHash": "194P+NOekDXrPHmM2R8678T4bRfZ2isQXDDAsXKE5qI0QLUnXbwB0upljAkyxk+Kkt1DV1tV+9tHOtHEEh3ksw=="
+      },
+      "Sentry": {
+        "type": "Transitive",
+        "resolved": "6.3.1",
+        "contentHash": "EomIkD+OmI9xCupBNVmKYUbxLnhzP5kRFAuDY52nEHXbOLt327eC2kScmO6HntkT+LVI4k6RnP3RmYpTSKo2Pw=="
+      },
+      "Sentry.Extensions.Logging": {
+        "type": "Transitive",
+        "resolved": "6.3.1",
+        "contentHash": "p5rPxBzzpNR0K6AS1LXMYiJqQq/GYUUEko4VPjhlaQiUXVTDNDAZyap6wdYMq4b8LIxBpVt/Ff9nbEsrMvgI7w==",
+        "dependencies": {
+          "Sentry": "6.3.1"
+        }
       },
       "SQLitePCLRaw.bundle_e_sqlite3": {
         "type": "Transitive",

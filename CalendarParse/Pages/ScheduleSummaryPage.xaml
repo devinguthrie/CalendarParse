@@ -36,7 +36,17 @@
               IsVisible="False"
               RowDefinitions="Auto,*"
               RowSpacing="6">
-            <Label Grid.Row="0" Text="⚠ Calendar Conflicts" FontAttributes="Bold" TextColor="Orange" />
+            <HorizontalStackLayout Grid.Row="0" Spacing="6" VerticalOptions="Center">
+                <Label Text="&#xE002;"
+                       TextColor="Orange"
+                       FontFamily="MaterialIcons"
+                       FontSize="18"
+                       VerticalOptions="Center" />
+                <Label Text="Calendar Conflicts"
+                       FontAttributes="Bold"
+                       TextColor="Orange"
+                       VerticalOptions="Center" />
+            </HorizontalStackLayout>
             <CollectionView Grid.Row="1" x:Name="ConflictsList">
                 <CollectionView.ItemTemplate>
                     <DataTemplate>
@@ -79,6 +89,13 @@
 
             <Button Text="Share My Calendar (.ics)"
                     Clicked="OnShareIcsClicked"
+                    Background="Transparent"
+                    TextColor="{StaticResource Primary}" />
+
+            <Button x:Name="EditScheduleBtn"
+                    Text="Edit Schedule"
+                    Clicked="OnEditScheduleClicked"
+                    IsVisible="False"
                     Background="Transparent"
                     TextColor="{StaticResource Primary}" />
         </VerticalStackLayout>

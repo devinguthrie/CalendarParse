@@ -1,0 +1,47 @@
+# Bug 1 regression guard — PositionTargetRect must be visible after layout settles.
+#
+# Root cause: ShowPositionTargetRect had a pre-layout guard (if _renderedImageSize.Width <= 0)
+# that suppressed the initial call. The post-layout re-draw requires OnImageSizeChanged to
+# call UpdateOverlayEditVisualState. If that wiring is broken, PositionTargetRect never
+# appears on screen — this test will time out at the extendedWaitUntil below.
+#
+# Run:
+#   maestro test maestro/position-rect-visible.yaml
+
+appId: com.companyname.calendarparse
+---
+
+# ── 1. Launch fresh ──────────────────────────────────────────────────────────
+- stopApp
+- launchApp
+
+# ── 2. Open debug harness ────────────────────────────────────────────────────
+- tapOn:
+    id: OverlayHarnessBtn
+
+# ── 3. Wait for page to be ready (first bubble auto-selected) ────────────────
+- extendedWaitUntil:
+    visible:
+      id: ConfirmActionBtn
+    timeout: 8000
+
+# ── 4. Take a baseline screenshot ────────────────────────────────────────────
+- takeScreenshot: position-rect-01-page-loaded
+
+# ── 5. Assert PositionTargetRect is visible — no user interaction needed ─────
+# OnImageSizeChanged → UpdateOverlayEditVisualState → ShowPositionTargetRect must have
+# wired the rect once the image layout committed real viewport dimensions.
+# If this times out, the OnImageSizeChanged → UpdateOverlayEditVisualState call is missing.
+- extendedWaitUntil:
+    visible:
+      id: PositionTargetRect
+    timeout: 5000
+
+- assertVisible:
+    id: PositionTargetRect
+
+# ── 6. Also confirm PositionTargetLabel is visible (shows the shift time) ────
+- assertVisible:
+    id: PositionTargetLabel
+
+- takeScreenshot: position-rect-02-rect-confirmed

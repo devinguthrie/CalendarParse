@@ -1,0 +1,73 @@
+# Bug 2 regression guard — Edit → type → Save must land on position-editing step.
+#
+# Root cause: SaveTime() was missing the auto-transition that ConfirmTime() has:
+#   if (PositionState == Pending) { _positionStateBeforeEditing = Pending; PositionState = Editing; }
+# Without it, SaveTime() left PositionState = Pending, causing IsLocationReviewOrEditStep to
+# return false and showing the "Confirm Location" pending step instead of entering
+# EnterLocationEditMode (SavePositionBtn + CancelPositionBtn).
+#
+# Assertion: after Save, PositionEditActions (Save Position / Cancel) must be visible
+# and NormalActions (Confirm / Edit) must NOT be visible.
+#
+# Run:
+#   maestro test maestro/edit-save-enters-position-step.yaml
+
+appId: com.companyname.calendarparse
+---
+
+# ── 1. Launch fresh ──────────────────────────────────────────────────────────
+- stopApp
+- launchApp
+
+# ── 2. Open debug harness ────────────────────────────────────────────────────
+- tapOn:
+    id: OverlayHarnessBtn
+
+# ── 3. Wait for first bubble to be auto-selected ────────────────────────────
+- extendedWaitUntil:
+    visible:
+      id: ConfirmActionBtn
+    timeout: 8000
+
+# ── 4. Open time-edit mode (tap the "Edit" button) ───────────────────────────
+# Note: use text: selector — EditActionBtn id: is unreliable for nested buttons.
+- tapOn:
+    text: "Edit"
+- waitForAnimationToEnd
+
+# ── 5. Assert EditActions panel appeared ─────────────────────────────────────
+- assertVisible:
+    id: EditActions
+
+# ── 6. Switch to free-text entry ─────────────────────────────────────────────
+- tapOn:
+    id: OtherTimeBtn
+- waitForAnimationToEnd
+
+# ── 7. Type a custom time value ───────────────────────────────────────────────
+# OnOtherTimeClicked calls .Focus() on BubbleTimeEntry so it should already be active;
+# tapOn here ensures focus even if the keyboard was delayed.
+- tapOn:
+    id: BubbleTimeEntry
+- inputText: "9:00-5:00"
+
+# ── 8. Save the edit ─────────────────────────────────────────────────────────
+# OnEditSaveClicked → SaveTime("9:00-5:00") → PositionState: Pending → Editing
+# → IsLocationReviewOrEditStep returns true → OnBubbleTapped → EnterLocationEditMode
+- tapOn:
+    id: EditSaveBtn
+- waitForAnimationToEnd
+
+- takeScreenshot: edit-save-01-after-save
+
+# ── 9. Assert we are in position-editing mode ─────────────────────────────────
+# PositionEditActions (Save Position + Cancel) must be visible.
+- assertVisible:
+    id: PositionEditActions
+
+# NormalActions (Confirm + Edit) must NOT be visible — we did NOT land on the
+# "Confirm Location" pending step that would appear if SaveTime omitted the transition.
+- assertNotVisible:
+    id: NormalActions
+
+- takeScreenshot: edit-save-02-position-edit-confirmed

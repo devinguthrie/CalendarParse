@@ -1,3 +1,4 @@
+using CalendarParse.Core.Services;
 using CalendarParse.Data;
 using CalendarParse.Models;
 using CalendarParse.Services;
@@ -27,7 +28,19 @@ public partial class HistoryPage : ContentPage
     protected override async void OnAppearing()
     {
         base.OnAppearing();
+        JobEvents.JobFinished += OnJobFinished;
         await LoadRunsAsync();
+    }
+
+    protected override void OnDisappearing()
+    {
+        base.OnDisappearing();
+        JobEvents.JobFinished -= OnJobFinished;
+    }
+
+    private void OnJobFinished()
+    {
+        MainThread.BeginInvokeOnMainThread(async () => await LoadRunsAsync());
     }
 
     private async void OnRefreshing(object? sender, EventArgs e)
@@ -69,6 +82,46 @@ public partial class HistoryPage : ContentPage
         await page.StartResumeAsync(runId);
     }
 
+    private async void OnCompletedTapped(object? sender, TappedEventArgs e)
+    {
+        if (e.Parameter is not int runId) return;
+
+        var run = await _db.GetRunForResumeAsync(runId);
+        if (run?.ShiftsJson is null) return;
+
+        var shifts = BubblePersistenceService.Deserialize(run.ShiftsJson)
+            .Select(p => new CalendarParse.Models.ShiftData
+            {
+                Employee  = p.Employee,
+                Date      = p.Date,
+                TimeRange = p.DisplayTime,
+            }).ToList();
+
+        await Navigation.PushAsync(new ScheduleSummaryPage(_db, _services, shifts, runId));
+    }
+
+    private async void OnDeleteRunInvoked(object? sender, EventArgs e)
+    {
+        if (sender is not SwipeItem item || item.CommandParameter is not int runId) return;
+
+        bool confirmed = await DisplayAlertAsync(
+            "Delete Entry",
+            "Remove this schedule entry? This cannot be undone.",
+            "Delete", "Cancel");
+
+        if (!confirmed) return;
+
+        try
+        {
+            await _db.DeleteRunAsync(runId);
+            await LoadRunsAsync();
+        }
+        catch
+        {
+            await DisplayAlertAsync("Error", "Could not delete the entry.", "OK");
+        }
+    }
+
     private async void OnRetryProcessingTapped(object? sender, EventArgs e)
     {
         if (sender is not Button btn || btn.CommandParameter is not int runId) return;
@@ -106,3 +159,4 @@ public partial class HistoryPage : ContentPage
         await LoadRunsAsync();
     }
 }
+
