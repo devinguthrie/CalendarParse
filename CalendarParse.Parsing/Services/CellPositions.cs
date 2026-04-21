@@ -1,4 +1,4 @@
-namespace CalendarParse.Cli.Services;
+namespace CalendarParse.Parsing.Services;
 
 /// <summary>
 /// Pixel-space layout of day columns and employee rows as computed during a parse run.

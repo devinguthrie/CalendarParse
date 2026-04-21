@@ -23,8 +23,17 @@ public class ConfirmationPageViewModel
     public Task<HealthResult?> CheckHealthAsync(CancellationToken ct = default)
         => _api.CheckHealthAsync(ct);
 
-    public Task<bool> ConfirmAsync(List<ShiftData> shifts, CancellationToken ct = default)
-        => _api.ConfirmAsync(shifts, ct);
+    public async Task<bool> ConfirmAsync(List<ShiftData> shifts, int runId = -1, CancellationToken ct = default)
+    {
+        string? jobId = null;
+        if (runId >= 0)
+        {
+            var run = await _db.GetRunForResumeAsync(runId, ct);
+            jobId = run?.RemoteJobId;
+        }
+
+        return await _api.ConfirmAsync(shifts, jobId, ct);
+    }
 
     public async Task<SubmitRunOutcome> SubmitForProcessingAsync(
         byte[] imageBytes,

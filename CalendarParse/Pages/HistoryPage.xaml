@@ -67,6 +67,11 @@
                                         <Label Text="{Binding ProgressText}"
                                                TextColor="{StaticResource Gray500}"
                                                FontSize="12" />
+                                        <Label Text="{Binding ErrorMessage}"
+                                               TextColor="OrangeRed"
+                                               FontSize="12"
+                                               LineBreakMode="WordWrap"
+                                               IsVisible="{Binding HasErrorMessage}" />
                                     </VerticalStackLayout>
 
                                     <!-- Retry button on error -->

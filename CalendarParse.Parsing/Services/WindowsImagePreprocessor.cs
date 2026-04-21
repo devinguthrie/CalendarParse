@@ -4,7 +4,7 @@ using Emgu.CV.CvEnum;
 using Emgu.CV.Structure;
 using Emgu.CV.Util;
 
-namespace CalendarParse.Cli.Services
+namespace CalendarParse.Parsing.Services
 {
     /// <summary>Which pre-processing (if any) to apply before sending an image to the vision model.</summary>
     public enum PreprocessMode

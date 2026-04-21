@@ -3,7 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace CalendarParse.Cli.Services;
+namespace CalendarParse.Parsing.Services;
 
 /// <summary>
 /// LLM backend that sends vision requests to Fireworks AI instead of local Ollama.

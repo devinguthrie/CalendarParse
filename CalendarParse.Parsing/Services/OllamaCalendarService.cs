@@ -4,7 +4,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using CalendarParse.Services;
 
-namespace CalendarParse.Cli.Services;
+namespace CalendarParse.Parsing.Services;
 
 /// <summary>
 /// ICalendarParseService implementation that sends the image to a local Ollama

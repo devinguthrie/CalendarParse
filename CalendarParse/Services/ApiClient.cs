@@ -1,6 +1,7 @@
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
+using CalendarParse.Core.Services;
 using CalendarParse.Data;
 using CalendarParse.Models;
 using Microsoft.EntityFrameworkCore;
@@ -189,20 +190,22 @@ public class ApiClient(
     /// On network failure, flushes to SQLite for retry.
     /// Returns true on success.
     /// </summary>
-    public async Task<bool> ConfirmAsync(List<ShiftData> shifts, CancellationToken ct = default)
+    public async Task<bool> ConfirmAsync(List<ShiftData> shifts, string? jobId = null, CancellationToken ct = default)
     {
+        var sanitizedShifts = NormalizeConfirmedShifts(shifts);
+
         try
         {
             var client  = await BuildClientAsync(ct);
-            var payload = new { shifts };
+            var payload = new { jobId, shifts = sanitizedShifts };
             var resp    = await client.PostAsJsonAsync("confirm", payload, ct);
             return resp.IsSuccessStatusCode;
         }
         catch
         {
             // Flush to SQLite retry buffer
-            var json = JsonSerializer.Serialize(shifts);
-            db.PendingConfirmations.Add(new PendingConfirmation { ShiftsJson = json });
+            var json = JsonSerializer.Serialize(sanitizedShifts);
+            db.PendingConfirmations.Add(new PendingConfirmation { JobId = jobId, ShiftsJson = json });
             await db.SaveChangesWithRetryAsync(ct);
             return false;
         }
@@ -226,8 +229,16 @@ public class ApiClient(
                 var shifts = JsonSerializer.Deserialize<List<ShiftData>>(item.ShiftsJson, _json);
                 if (shifts is null) continue;
 
+                var sanitizedShifts = NormalizeConfirmedShifts(shifts);
+                var sanitizedJson   = JsonSerializer.Serialize(sanitizedShifts);
+                if (!string.Equals(item.ShiftsJson, sanitizedJson, StringComparison.Ordinal))
+                {
+                    item.ShiftsJson = sanitizedJson;
+                    await db.SaveChangesWithRetryAsync(ct);
+                }
+
                 var client  = await BuildClientAsync(ct);
-                var payload = new { shifts };
+                var payload = new { jobId = item.JobId, shifts = sanitizedShifts };
                 var resp    = await client.PostAsJsonAsync("confirm", payload, ct);
                 if (resp.IsSuccessStatusCode)
                 {
@@ -263,6 +274,17 @@ public class ApiClient(
             client.DefaultRequestHeaders.Add("X-CalendarParse-Key", prefs.ServerKey);
 
         return client;
+    }
+
+    private static List<ShiftData> NormalizeConfirmedShifts(IEnumerable<ShiftData> shifts)
+    {
+        return shifts.Select(shift => new ShiftData
+        {
+            Employee = shift.Employee,
+            Date = shift.Date,
+            TimeRange = ConfirmedShiftSanitizer.NormalizeTimeRange(shift.TimeRange, shift.Employee),
+            EstimatedBounds = shift.EstimatedBounds,
+        }).ToList();
     }
 
     private class ProcessResponseBody

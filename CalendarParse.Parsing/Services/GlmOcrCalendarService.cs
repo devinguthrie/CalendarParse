@@ -7,7 +7,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using CalendarParse.Services;
 
-namespace CalendarParse.Cli.Services;
+namespace CalendarParse.Parsing.Services;
 
 /// <summary>
 /// ICalendarParseService implementation that uses GLM-OCR (glm-ocr via Ollama) for
@@ -92,6 +92,10 @@ public class GlmOcrCalendarService : ICalendarParseService
         if (html.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase))
             return html;
 
+        if (System.Environment.GetEnvironmentVariable("GLM_OCR_DIAG") == "1")
+            await File.WriteAllTextAsync(
+                Path.Combine(Path.GetTempPath(), "glm-ocr-debug.html"), html, ct);
+
         var result = ParseHtmlTable(html);
         if (result is null)
             return "ERROR: GLM-OCR returned no parseable table headers";
@@ -122,7 +126,7 @@ public class GlmOcrCalendarService : ICalendarParseService
             images     = new[] { base64Image },
             stream     = false,
             keep_alive = 0,
-            options    = new { num_ctx = 32768, num_predict = 20000 }
+            options    = new { num_ctx = 32768, num_predict = 20000, temperature = 0 }
         };
 
         HttpResponseMessage httpResponse;
@@ -157,6 +161,8 @@ public class GlmOcrCalendarService : ICalendarParseService
 
     private static byte[] ResizeForGlmOcrIfNeeded(byte[] raw)
     {
+        // GLM_OCR_NO_RESIZE=1 bypasses the cap for experiments (e.g. #14114 num_ctx workaround tests)
+        if (Environment.GetEnvironmentVariable("GLM_OCR_NO_RESIZE") == "1") return raw;
         using var src = new Mat();
         CvInvoke.Imdecode(raw, ImreadModes.ColorBgr, src);
         if (src.Height <= MaxGlmOcrHeight) return raw;
@@ -368,7 +374,8 @@ public class GlmOcrCalendarService : ICalendarParseService
         s = s.Trim();
         if (string.IsNullOrEmpty(s)) return false;
         if (TimeRangeRegex.IsMatch(s)) return true;
-        return s.Equals("x",   StringComparison.OrdinalIgnoreCase)
+        return s.Equals("xx",  StringComparison.OrdinalIgnoreCase)
+            || s.Equals("x",   StringComparison.OrdinalIgnoreCase)
             || s.Equals("PTO", StringComparison.OrdinalIgnoreCase)
             || s.Equals("RTO", StringComparison.OrdinalIgnoreCase);
     }
@@ -383,6 +390,7 @@ public class GlmOcrCalendarService : ICalendarParseService
 
         if (raw.Equals("RTO", StringComparison.OrdinalIgnoreCase)) return "RTO";
         if (raw.Equals("PTO", StringComparison.OrdinalIgnoreCase)) return "PTO";
+        if (raw.Equals("xx",  StringComparison.OrdinalIgnoreCase)) return "xx";
         if (raw.Equals("x",   StringComparison.OrdinalIgnoreCase)) return "x";
 
         // Accept time ranges

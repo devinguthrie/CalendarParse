@@ -60,4 +60,35 @@ public class EmployeeNameMatcherTests
         var result = Match(Shifts("José"), "Jose");
         Assert.Equal(MatchKind.ExactMatch, result.Kind);
     }
+
+    [Fact]
+    public void ExactCaseInsensitive_FiltersOnlyRequestedEmployee()
+    {
+        var all = Shifts("Franny", "Andee", "Franny");
+        var filtered = ExactCaseInsensitive(all, "Franny");
+
+        Assert.Equal(2, filtered.Count);
+        Assert.All(filtered, s => Assert.Equal("Franny", s.Employee));
+    }
+
+    [Fact]
+    public void ExactCaseInsensitive_TrimmedCaseInsensitiveMatch()
+    {
+        var all = Shifts(" Franny ", "Brittney");
+        var filtered = ExactCaseInsensitive(all, "franny");
+
+        Assert.Single(filtered);
+        Assert.Equal(" Franny ", filtered[0].Employee);
+    }
+
+    [Fact]
+    public void DistinctEmployees_ReturnsCaseInsensitiveDistinctSet()
+    {
+        var all = Shifts("Franny", "franny", "Andee");
+        var distinct = DistinctEmployees(all, take: 3);
+
+        Assert.Equal(2, distinct.Count);
+        Assert.Contains("Franny", distinct);
+        Assert.Contains("Andee", distinct);
+    }
 }

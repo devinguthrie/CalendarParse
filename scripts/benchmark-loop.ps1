@@ -36,9 +36,9 @@ $ErrorActionPreference = 'Stop'
 # ── Repo root (script lives at repo root) ────────────────────────────────────
 $RepoRoot = $PSScriptRoot
 $DefaultBranch = (& git -C $PSScriptRoot symbolic-ref --short HEAD 2>$null) ?? 'master'
-$HybridFile  = Join-Path $RepoRoot 'CalendarParse.Cli\Services\HybridCalendarService.cs'
-$TriedFile   = Join-Path $RepoRoot 'tried_changes.json'
-$ResultsFile = Join-Path $RepoRoot 'loop-results.md'
+$HybridFile       = Join-Path $RepoRoot 'CalendarParse.Cli\Services\HybridCalendarService.cs'
+$ExperimentsFile  = Join-Path $RepoRoot 'experiments.jsonl'
+$ResultsFile      = Join-Path $RepoRoot 'loop-results.md'
 $ProjectPath = Join-Path $RepoRoot 'CalendarParse.Cli'
 
 # ── 1. Load .env file if present ─────────────────────────────────────────────
@@ -77,9 +77,9 @@ try {
 Write-Host '==> Build succeeded.' -ForegroundColor Green
 
 # ── 3. Initialize state files if they don't exist ────────────────────────────
-if (-not (Test-Path $TriedFile)) {
-    Set-Content -Path $TriedFile -Value '[]' -Encoding UTF8
-    Write-Host "==> Initialized $TriedFile"
+if (-not (Test-Path $ExperimentsFile)) {
+    New-Item -Path $ExperimentsFile -ItemType File | Out-Null
+    Write-Host "==> Initialized $ExperimentsFile"
 }
 
 if (-not (Test-Path $ResultsFile)) {
@@ -163,24 +163,17 @@ function Format-ErrorList($errors) {
     return $lines -join "`n"
 }
 
-# ── Helper: read tried_changes.json ──────────────────────────────────────────
+# ── Helper: read experiments.jsonl ──────────────────────────────────────────
 function Read-TriedChanges {
-    $raw = Get-Content $TriedFile -Raw -Encoding UTF8
-    if ([string]::IsNullOrWhiteSpace($raw)) { return @() }
-    try {
-        return @($raw | ConvertFrom-Json)
-    } catch {
-        return @()
-    }
+    if (-not (Test-Path $ExperimentsFile)) { return @() }
+    $lines = Get-Content $ExperimentsFile -Encoding UTF8 | Where-Object { $_ -ne '' }
+    if (-not $lines) { return @() }
+    return @($lines | ForEach-Object { $_ | ConvertFrom-Json })
 }
 
-# ── Helper: append entry to tried_changes.json ───────────────────────────────
+# ── Helper: append entry to experiments.jsonl ───────────────────────────────
 function Append-TriedChange($entry) {
-    $tried = Read-TriedChanges
-    # ConvertFrom-Json returns PSCustomObject; we need an array
-    if ($tried -isnot [array]) { $tried = @($tried) }
-    $tried += $entry
-    $tried | ConvertTo-Json -Depth 5 | Set-Content -Path $TriedFile -Encoding UTF8
+    $entry | ConvertTo-Json -Compress -Depth 5 | Add-Content -Path $ExperimentsFile -Encoding UTF8
 }
 
 # ── Helper: call Claude API ───────────────────────────────────────────────────
@@ -304,12 +297,11 @@ function Count-Occurrences([string]$haystack, [string]$needle) {
     return $count
 }
 
-# ── Helper: get next tried_change id ─────────────────────────────────────────
+# ── Helper: get next experiment id ──────────────────────────────────────────
 function Get-NextTriedId {
-    $tried = @(Read-TriedChanges)
-    if ($tried.Count -eq 0) { return 1 }
-    $maxId = (@($tried) | ForEach-Object { [int]($_.id) } | Measure-Object -Maximum).Maximum
-    return $maxId + 1
+    if (-not (Test-Path $ExperimentsFile)) { return 1 }
+    $lineCount = @(Get-Content $ExperimentsFile -Encoding UTF8 | Where-Object { $_ -ne '' }).Count
+    return $lineCount + 1
 }
 
 # ── System prompt (embedded) ──────────────────────────────────────────────────
@@ -450,7 +442,7 @@ while ($iteration -lt $MaxIterations -and $currentScore -lt $TargetScore) {
     $pctStr    = [math]::Round(($currentScore / $currentTotal) * 100, 1)
     $errorList = Format-ErrorList $currentErrors
 
-    # Cap tried_changes to the last 20 entries to keep token count bounded
+    # Use last 20 entries to keep token count bounded
     $triedAll  = @(Read-TriedChanges)
     $triedAllCount = $triedAll.Count
     $triedRecent = @(if ($triedAllCount -gt 20) { $triedAll[-20..-1] } else { $triedAll })
@@ -681,7 +673,7 @@ Propose ONE change targeting the most impactful error type. Return JSON only.
         & git branch -D $branchName 2>&1 | Out-Null
         Pop-Location
 
-        # Log win to tried_changes.json
+        # Log win to experiments.jsonl
         $entry = [ordered]@{
             id             = Get-NextTriedId
             change_type    = $proposal.change_type
@@ -694,7 +686,7 @@ Propose ONE change targeting the most impactful error type. Return JSON only.
             timestamp      = $timestamp
         }
         Append-TriedChange $entry
-        Write-Host "  --> tried_changes.json updated (committed)." -ForegroundColor Green
+        Write-Host "  --> experiments.jsonl updated (committed)." -ForegroundColor Green
 
         $currentScore  = $newScore
         $currentErrors = $newResult.Errors
@@ -706,7 +698,7 @@ Propose ONE change targeting the most impactful error type. Return JSON only.
         & git branch -D $branchName 2>&1 | Out-Null
         Pop-Location
 
-        # Log to tried_changes.json
+        # Log to experiments.jsonl
         $entry = [ordered]@{
             id             = Get-NextTriedId
             change_type    = $proposal.change_type

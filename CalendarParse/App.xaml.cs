@@ -1,5 +1,7 @@
 using CalendarParse.Data;
 using CalendarParse.Pages;
+using CalendarParse.Services;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace CalendarParse
 {
@@ -25,6 +27,7 @@ namespace CalendarParse
             {
                 await MauiProgram.InitializeDatabaseAsync(services);
                 await MauiProgram.ResumeInFlightJobsAsync(services);
+                await RetryPendingConfirmationsAsync(services);
             }
             catch (Exception ex)
             {
@@ -36,6 +39,29 @@ namespace CalendarParse
 #if ANDROID
             WireNotificationMonitor();
 #endif
+        }
+
+        protected override void OnResume()
+        {
+            base.OnResume();
+
+            var services = IPlatformApplication.Current?.Services;
+            if (services is null) return;
+
+            _ = RetryPendingConfirmationsAsync(services);
+        }
+
+        private static async Task RetryPendingConfirmationsAsync(IServiceProvider services)
+        {
+            try
+            {
+                var apiClient = services.GetRequiredService<ApiClient>();
+                await apiClient.RetryPendingConfirmationsAsync();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[App] Pending-confirmation retry failed: {ex.Message}");
+            }
         }
 
 #if ANDROID

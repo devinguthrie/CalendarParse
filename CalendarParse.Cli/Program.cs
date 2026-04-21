@@ -1,7 +1,8 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using CalendarParse.Cli.Services;
+using Microsoft.Data.Sqlite;
+using CalendarParse.Parsing.Services;
 using CalendarParse.Models;
 using CalendarParse.Services;
 
@@ -24,9 +25,13 @@ bool   testMode      = false;
 bool   visionMode    = false;
 bool   fireworksMode = false;
 bool   glmOcrMode    = false;
+bool   useTesseract   = false;
+bool   useEasyOcr     = false;
+bool   usePaddleOcr   = false;
 string ollamaModel    = OllamaCalendarService.DefaultModel;
 string preprocessArg  = string.Empty;
 string knownNamesArg  = string.Empty;
+string correctionsDbPath = string.Empty;
 
 for (int i = 1; i < args.Length; i++)
 {
@@ -40,12 +45,20 @@ for (int i = 1; i < args.Length; i++)
         fireworksMode = true;
     else if (args[i] is "--glm-ocr")
         glmOcrMode = true;
+    else if (args[i] is "--use-tesseract")
+        useTesseract = true;
+    else if (args[i] is "--use-easyocr")
+        useEasyOcr = true;
+    else if (args[i] is "--use-paddleocr")
+        usePaddleOcr = true;
     else if (args[i] is "--model" && i + 1 < args.Length)
         ollamaModel = args[++i];
     else if (args[i] is "--preprocess" && i + 1 < args.Length)
         preprocessArg = args[++i];
     else if (args[i] is "--known-names" && i + 1 < args.Length)
         knownNamesArg = args[++i];
+    else if (args[i] is "--test-from-corrections-db" && i + 1 < args.Length)
+        correctionsDbPath = args[++i];
 }
 
 PreprocessMode preprocessMode = PreprocessMode.None;
@@ -60,20 +73,48 @@ if (!string.IsNullOrEmpty(preprocessArg))
 
 // Accept either a folder or a single image file.
 bool singleFileMode = false;
-if (File.Exists(folder))
+if (string.IsNullOrWhiteSpace(correctionsDbPath))
 {
-    string ext = Path.GetExtension(folder).ToLowerInvariant();
-    if (ext is not (".jpg" or ".jpeg" or ".png"))
+    if (File.Exists(folder))
     {
-        Console.Error.WriteLine($"ERROR: File must be .jpg, .jpeg, or .png: {folder}");
+        string ext = Path.GetExtension(folder).ToLowerInvariant();
+        if (ext is not (".jpg" or ".jpeg" or ".png"))
+        {
+            Console.Error.WriteLine($"ERROR: File must be .jpg, .jpeg, or .png: {folder}");
+            return 1;
+        }
+        singleFileMode = true;
+    }
+    else if (!Directory.Exists(folder))
+    {
+        Console.Error.WriteLine($"ERROR: Path not found: {folder}");
         return 1;
     }
-    singleFileMode = true;
 }
-else if (!Directory.Exists(folder))
+
+if (!string.IsNullOrWhiteSpace(correctionsDbPath))
 {
-    Console.Error.WriteLine($"ERROR: Path not found: {folder}");
-    return 1;
+    if (!File.Exists(correctionsDbPath))
+    {
+        Console.Error.WriteLine($"ERROR: Corrections DB not found: {correctionsDbPath}");
+        return 1;
+    }
+
+    string materializedFolder;
+    try
+    {
+        materializedFolder = await BuildBenchmarkFolderFromCorrectionsDbAsync(correctionsDbPath);
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"ERROR: {ex.Message}");
+        return 1;
+    }
+    folder = materializedFolder;
+    testMode = true;
+    singleFileMode = false;
+    Console.WriteLine($"Benchmark source: ConfirmedCorrections DB ({correctionsDbPath})");
+    Console.WriteLine($"Materialized temp benchmark folder: {folder}");
 }
 
 // ── Service wiring ────────────────────────────────────────────────────────────
@@ -111,17 +152,49 @@ if (visionMode)
 }
 else if (glmOcrMode)
 {
-    parser = new GlmOcrCalendarService();
-    Console.WriteLine("Mode: GLM-OCR (glm-ocr via Ollama, full-table markdown)");
+    string glmModel = string.IsNullOrEmpty(ollamaModel) ? GlmOcrCalendarService.DefaultModel : ollamaModel;
+    parser = new GlmOcrCalendarService(model: glmModel);
+    Console.WriteLine($"Mode: GLM-OCR ({glmModel} via Ollama, full-table markdown)");
 }
 else
 {
+    IOcrService? ocrOverride;
+    if (useTesseract)
+    {
+        ocrOverride = new TesseractOcrService(Path.Combine(AppContext.BaseDirectory, "tessdata"));
+    }
+    else if (useEasyOcr)
+    {
+        string scriptPath = Path.Combine(AppContext.BaseDirectory, "Scripts", "easyocr_ocr.py");
+        string pythonExe  = FindVenvPython() ?? "python";
+        Console.WriteLine($"EasyOCR: python={pythonExe}");
+        Console.WriteLine($"EasyOCR: script={scriptPath}");
+        Console.WriteLine("EasyOCR: loading model (first run may take ~30s to download)...");
+        ocrOverride = new EasyOcrService(scriptPath, pythonExe);
+        Console.WriteLine("EasyOCR: READY");
+    }
+    else if (usePaddleOcr)
+    {
+        string scriptPath = Path.Combine(AppContext.BaseDirectory, "Scripts", "paddleocr_ocr.py");
+        string pythonExe  = FindVenvPython() ?? "python";
+        Console.WriteLine($"PaddleOCR: python={pythonExe}");
+        Console.WriteLine($"PaddleOCR: script={scriptPath}");
+        Console.WriteLine("PaddleOCR: loading model (first run may take ~30s to download)...");
+        ocrOverride = new PaddleOcrService(scriptPath, pythonExe);
+        Console.WriteLine("PaddleOCR: READY");
+    }
+    else
+    {
+        ocrOverride = null;
+    }
     parser = new HybridCalendarService(
         model:      ollamaModel,
         knownNames: knownNamesArr.Length > 0 ? knownNamesArr : null,
-        llmBackend: fireworksBackend);
+        llmBackend: fireworksBackend,
+        ocrService: ocrOverride);
+    string ocrLabel = useTesseract ? "Tesseract" : useEasyOcr ? "EasyOCR" : usePaddleOcr ? "PaddleOCR" : "WinRT OCR";
     string backend = fireworksMode ? $"Fireworks model: {ollamaModel}" : $"Ollama model: {ollamaModel}";
-    Console.WriteLine($"Mode: HYBRID ({backend} + WinRT OCR + grid crop)");
+    Console.WriteLine($"Mode: HYBRID ({backend} + {ocrLabel} + grid crop)");
     if (knownNamesArr.Length > 0)
         Console.WriteLine($"Known names: {string.Join(", ", knownNamesArr)}");
 }
@@ -615,6 +688,9 @@ static void PrintUsage()
     Console.WriteLine("                        Preprocessed image written to preprocess-debug/ when mode != none.");
     Console.WriteLine("  --known-names <csv>   Comma-separated list of expected employee names.");
     Console.WriteLine("                        Normalises OCR phantoms and improves name-extraction accuracy.");
+    Console.WriteLine("  --test-from-corrections-db <path>");
+    Console.WriteLine("                        Build a temporary benchmark set from ConfirmedCorrections in jobs.db,");
+    Console.WriteLine("                        then run --test against it automatically.");
     Console.WriteLine();
     Console.WriteLine("Output:");
     Console.WriteLine("  For each image.jpg, writes image.output.json and image.debug.txt in the same folder.");
@@ -623,6 +699,24 @@ static void PrintUsage()
     Console.WriteLine("Requires:");
     Console.WriteLine("  Ollama running locally (https://ollama.com) with the model pulled.");
     Console.WriteLine("  WinRT OCR available on Windows 10+ (no extra installation needed).");
+}
+
+/// <summary>
+/// Walks up from the executable's directory looking for a .venv created by the
+/// VS Code Python extension (Windows path: .venv\Scripts\python.exe).
+/// Returns the full path if found, or null if the venv is not present.
+/// </summary>
+static string? FindVenvPython()
+{
+    string? dir = AppContext.BaseDirectory;
+    while (dir is not null)
+    {
+        var candidate = Path.Combine(dir, ".venv", "Scripts", "python.exe");
+        if (File.Exists(candidate))
+            return candidate;
+        dir = Path.GetDirectoryName(dir);
+    }
+    return null;
 }
 
 static void LoadDotEnv()
@@ -651,4 +745,150 @@ static void LoadDotEnv()
         }
         dir = Path.GetDirectoryName(dir);
     }
+}
+
+static async Task<string> BuildBenchmarkFolderFromCorrectionsDbAsync(string dbPath)
+{
+    string tempDir = Path.Combine(
+        Path.GetTempPath(),
+        $"calendarparse-live-benchmark-{DateTime.UtcNow:yyyyMMddHHmmss}-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(tempDir);
+
+    await using var conn = new SqliteConnection($"Data Source={dbPath}");
+    await conn.OpenAsync();
+
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+SELECT Id, ImagePath, ShiftsJson
+FROM ConfirmedCorrections
+ORDER BY Id";
+
+    SqliteDataReader reader;
+    try
+    {
+        reader = await cmd.ExecuteReaderAsync();
+    }
+    catch (SqliteException ex) when (ex.SqliteErrorCode == 1 && ex.Message.Contains("no such table", StringComparison.OrdinalIgnoreCase))
+    {
+        throw new InvalidOperationException(
+            "ConfirmedCorrections table not found. Start CalendarParse.Api once to initialize schema, then submit and confirm at least one run.");
+    }
+
+    await using (reader)
+    {
+
+        int exported = 0;
+        while (await reader.ReadAsync())
+        {
+            int id = reader.GetInt32(0);
+            string? imagePath = reader.IsDBNull(1) ? null : reader.GetString(1);
+            string shiftsJson = reader.IsDBNull(2) ? "[]" : reader.GetString(2);
+
+            if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
+                continue;
+
+            var answer = BuildAnswerFromConfirmedShiftsJson(shiftsJson);
+            if (answer is null || answer.Employees.Count == 0)
+                continue;
+
+            string stem = $"CORR ({id})";
+            string ext = Path.GetExtension(imagePath);
+            if (string.IsNullOrWhiteSpace(ext)) ext = ".jpg";
+
+            File.Copy(imagePath, Path.Combine(tempDir, stem + ext), overwrite: true);
+
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDir, stem + ".answer.json"),
+                JsonSerializer.Serialize(answer, new JsonSerializerOptions { WriteIndented = true }));
+
+            exported++;
+        }
+
+        if (exported == 0)
+            throw new InvalidOperationException(
+                "No usable corrections found in ConfirmedCorrections (missing images or empty shifts).");
+    }
+
+    return tempDir;
+}
+
+static BenchmarkAnswer? BuildAnswerFromConfirmedShiftsJson(string shiftsJson)
+{
+    List<ShiftData>? shifts;
+    try
+    {
+        shifts = JsonSerializer.Deserialize<List<ShiftData>>(shiftsJson);
+    }
+    catch
+    {
+        return null;
+    }
+
+    if (shifts is null || shifts.Count == 0)
+        return null;
+
+    var validShifts = shifts
+        .Where(s => !string.IsNullOrWhiteSpace(s.Employee) && !string.IsNullOrWhiteSpace(s.Date))
+        .ToList();
+    if (validShifts.Count == 0)
+        return null;
+
+    var employees = validShifts
+        .GroupBy(s => s.Employee.Trim(), StringComparer.OrdinalIgnoreCase)
+        .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
+        .Select(g => new BenchmarkEmployee
+        {
+            Name = g.Key,
+            Shifts = g
+                .Select(s => new BenchmarkShift
+                {
+                    Date = NormalizeDate(s.Date ?? string.Empty),
+                    Shift = s.TimeRange?.Trim() ?? string.Empty,
+                })
+                .OrderBy(s => s.Date, StringComparer.Ordinal)
+                .ToList()
+        })
+        .Where(e => e.Shifts.Count > 0)
+        .ToList();
+
+    string month = string.Empty;
+    int year = 0;
+    DateTime? firstDate = validShifts
+        .Select(s => NormalizeDate(s.Date ?? string.Empty))
+        .Select(d => DateTime.TryParse(d, out var dt) ? dt : (DateTime?)null)
+        .Where(dt => dt.HasValue)
+        .OrderBy(dt => dt!.Value)
+        .FirstOrDefault();
+
+    if (firstDate.HasValue)
+    {
+        month = firstDate.Value.ToString("MMMM");
+        year = firstDate.Value.Year;
+    }
+
+    return new BenchmarkAnswer
+    {
+        Month = month,
+        Year = year,
+        Employees = employees,
+    };
+}
+
+sealed class BenchmarkAnswer
+{
+    public string Month { get; set; } = string.Empty;
+    public int Year { get; set; }
+    public List<BenchmarkEmployee> Employees { get; set; } = [];
+}
+
+sealed class BenchmarkEmployee
+{
+    public string Name { get; set; } = string.Empty;
+    public List<BenchmarkShift> Shifts { get; set; } = [];
+}
+
+sealed class BenchmarkShift
+{
+    public string Date { get; set; } = string.Empty;
+    public string Shift { get; set; } = string.Empty;
 }

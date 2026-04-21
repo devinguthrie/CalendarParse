@@ -47,9 +47,10 @@
                 <Entry Grid.Column="1"
                        x:Name="SearchEntry"
                        Placeholder="Filter by employee name"
+                       TextChanged="OnSearchEntryTextChanged"
                        ClearButtonVisibility="WhileEditing" />
             </Grid>
-            <Label Text="Name auto-filled from Settings. Tap Settings to change."
+            <Label Text="Name auto-filled from Settings. Required before processing. Tap Settings to change."
                    FontSize="11"
                    TextColor="{StaticResource Gray500}"
                    Margin="0,-4,0,0" />
@@ -91,6 +92,13 @@
                     Clicked="OnSentryTestClicked"
                     IsVisible="False"
                     Background="{StaticResource Gray300}" />
+                <Button x:Name="ClearLocalDbBtn"
+                    AutomationId="ClearLocalDbBtn"
+                    Text="Clear Local DB"
+                    Clicked="OnClearLocalDbClicked"
+                    IsVisible="False"
+                    Background="#CC3300"
+                    TextColor="White" />
         </VerticalStackLayout>
 
         <!-- ── Currently Processing section title ───────────── -->

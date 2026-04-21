@@ -1,7 +1,7 @@
 using System.Reflection;
 using System.Text.Json;
 
-namespace CalendarParse.Cli.Services;
+namespace CalendarParse.Parsing.Services;
 
 /// <summary>
 /// Loads and resolves LLM prompt templates from the embedded Prompts/prompts.json resource.
@@ -33,9 +33,9 @@ internal static class PromptService
     private static IReadOnlyDictionary<string, string> LoadPrompts()
     {
         using var stream = Assembly.GetExecutingAssembly()
-            .GetManifestResourceStream("CalendarParse.Cli.Prompts.prompts.json")
+            .GetManifestResourceStream("CalendarParse.Parsing.Prompts.prompts.json")
             ?? throw new InvalidOperationException(
-                "Embedded resource 'CalendarParse.Cli.Prompts.prompts.json' not found. " +
+                "Embedded resource 'CalendarParse.Parsing.Prompts.prompts.json' not found. " +
                 "Ensure the file is included as EmbeddedResource in the .csproj.");
 
         using var doc = JsonDocument.Parse(stream);

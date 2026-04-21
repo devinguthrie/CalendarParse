@@ -27,6 +27,31 @@ public static class EmployeeNameMatcher
         NoShifts,       // server returned zero shifts
     }
 
+    public static List<ShiftData> ExactCaseInsensitive(List<ShiftData> allShifts, string employeeName)
+    {
+        if (allShifts.Count == 0 || string.IsNullOrWhiteSpace(employeeName))
+            return [];
+
+        var requested = employeeName.Trim();
+        return allShifts
+            .Where(s => string.Equals((s.Employee ?? string.Empty).Trim(), requested, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+    }
+
+    public static List<string> DistinctEmployees(List<ShiftData> allShifts, int take = 3)
+    {
+        if (allShifts.Count == 0 || take <= 0)
+            return [];
+
+        return allShifts
+            .Select(s => s.Employee?.Trim())
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(take)
+            .Cast<string>()
+            .ToList();
+    }
+
     public static MatchResult Match(List<ShiftData> allShifts, string employeeName)
     {
         if (allShifts.Count == 0)

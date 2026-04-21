@@ -6,7 +6,7 @@ using Emgu.CV.Structure;
 using Emgu.CV.Util;
 using Rect = CalendarParse.Models.Rect;
 
-namespace CalendarParse.Cli.Services
+namespace CalendarParse.Parsing.Services
 {
     /// <summary>
     /// Windows implementation of <see cref="ITableDetector"/> using Emgu.CV morphological operations.

@@ -2,7 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using CalendarParse.Api;
 using CalendarParse.Api.Data;
-using CalendarParse.Cli.Services;
+using CalendarParse.Parsing.Services;
 using CalendarParse.Models;
 using CalendarParse.Services;
 using Microsoft.EntityFrameworkCore;
@@ -112,6 +112,9 @@ app.MapGet("/health", async (IHttpClientFactory httpClientFactory) =>
 // POST /submit — accepts image bytes, immediately returns a job ID, processes asynchronously
 app.MapPost("/submit", async (SubmitRequest request, JobDbContext db, IServiceProvider services) =>
 {
+    if (string.IsNullOrWhiteSpace(request.EmployeeName))
+        return Results.BadRequest(new { error = "employeeName is required." });
+
     byte[] imageBytes;
     try
     {
@@ -176,6 +179,9 @@ app.MapGet("/jobs/{id}/result", async (string id, JobDbContext db) =>
 // POST /process — legacy synchronous endpoint (kept for backward compat / CLI use)
 app.MapPost("/process", async (ProcessRequest request, HybridCalendarService hybrid) =>
 {
+    if (string.IsNullOrWhiteSpace(request.EmployeeName))
+        return Results.BadRequest(new { error = "employeeName is required." });
+
     if (debugMode)
     {
         await Task.Delay(TimeSpan.FromSeconds(5));
@@ -198,20 +204,43 @@ app.MapPost("/process", async (ProcessRequest request, HybridCalendarService hyb
     if (result.IsError)
         return Results.Json(new { error = result.Error }, statusCode: 500);
 
+    var match = EmployeeNameMatcher.Match(result.Shifts, request.EmployeeName);
+    if (TryBuildEmployeeMatchError(request.EmployeeName, result.Shifts, match) is { } filteredError)
+        return Results.Json(new { error = filteredError }, statusCode: 422);
+
     return Results.Ok(new ProcessResponse
     {
-        Shifts      = result.Shifts,
+        Shifts      = match.Shifts,
         ImageWidth  = result.ImageWidth,
         ImageHeight = result.ImageHeight,
     });
 });
 
 // POST /confirm — stores employee-corrected shifts for future accuracy improvement
-app.MapPost("/confirm", (ConfirmRequest request, ILogger<Program> logger) =>
+app.MapPost("/confirm", async (ConfirmRequest request, JobDbContext db, ILogger<Program> logger) =>
 {
-    logger.LogInformation("Received {Count} confirmed shift(s) for training data.", request.Shifts.Count);
-    // TODO: persist to corrections store (see TODOS.md)
-    return Results.Ok(new { ok = true });
+    logger.LogInformation(
+        "Received {Count} confirmed shift(s). jobId={JobId}",
+        request.Shifts.Count,
+        request.JobId ?? "(none)");
+
+    Job? sourceJob = null;
+    if (!string.IsNullOrWhiteSpace(request.JobId))
+        sourceJob = await db.Jobs.FindAsync(request.JobId);
+
+    var correction = new ConfirmedCorrection
+    {
+        JobId          = request.JobId,
+        ImagePath      = sourceJob?.ImagePath,
+        EmployeeName   = sourceJob?.EmployeeName ?? request.Shifts.FirstOrDefault()?.Employee ?? string.Empty,
+        ShiftsJson     = JsonSerializer.Serialize(request.Shifts),
+        ConfirmedAtUtc = DateTime.UtcNow,
+    };
+
+    db.ConfirmedCorrections.Add(correction);
+    await db.SaveChangesAsync();
+
+    return Results.Ok(new { ok = true, correctionId = correction.Id });
 });
 
 // ── Auth scaffolding (stubs — will be wired up when auth is implemented) ──────
@@ -266,9 +295,19 @@ static async Task ProcessJobAsync(
         }
         else
         {
+            var match = EmployeeNameMatcher.Match(result.Shifts, job.EmployeeName);
+            if (TryBuildEmployeeMatchError(job.EmployeeName, result.Shifts, match) is { } filteredError)
+            {
+                job.Status      = JobStatus.Error;
+                job.Error       = filteredError;
+                job.CompletedAt = DateTime.UtcNow;
+                await db.SaveChangesAsync();
+                return;
+            }
+
             var resultPayload = new JobResultResponse
             {
-                Shifts      = result.Shifts,
+                Shifts      = match.Shifts,
                 ImageWidth  = result.ImageWidth,
                 ImageHeight = result.ImageHeight,
             };
@@ -278,8 +317,8 @@ static async Task ProcessJobAsync(
 
             Console.WriteLine($"[Job {jobId}] Done — result JSON:\n{job.ResultJson}");
 
-            // Image no longer needed on server after result is stored
-            try { File.Delete(job.ImagePath); } catch { /* best-effort */ }
+            // Keep source images so confirmed-correction rows can reference them
+            // for benchmark dataset export.
         }
     }
     catch (Exception ex)
@@ -324,6 +363,26 @@ static JobResultResponse BuildMockJobResultResponse(string employeeName) => new(
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+static string? TryBuildEmployeeMatchError(
+    string employeeName,
+    List<ShiftData> allShifts,
+    EmployeeNameMatcher.MatchResult match)
+{
+    if (string.IsNullOrWhiteSpace(employeeName) || match.Kind is EmployeeNameMatcher.MatchKind.ExactMatch
+        or EmployeeNameMatcher.MatchKind.FuzzyMatch
+        or EmployeeNameMatcher.MatchKind.NoShifts)
+        return null;
+
+    var distinctEmployees = EmployeeNameMatcher.DistinctEmployees(allShifts);
+
+    if (match.Kind == EmployeeNameMatcher.MatchKind.Ambiguous)
+        return $"Search Name '{employeeName}' matched multiple employees ({string.Join(", ", match.Candidates)}). Please be more specific and retry.";
+
+    return distinctEmployees.Count == 0
+        ? $"No employee names were returned by the parse for Search Name '{employeeName}'. Check Search Name and retry."
+        : $"Search Name '{employeeName}' did not match parse results. Returned employees: {string.Join(", ", distinctEmployees)}.";
+}
 
 static string EnsureApiKey(WebApplicationBuilder builder, int port)
 {

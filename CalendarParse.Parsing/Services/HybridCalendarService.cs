@@ -1,13 +1,15 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using CalendarParse.Models;
 using CalendarParse.Services;
 using Emgu.CV;
 using Emgu.CV.CvEnum;
+using Emgu.CV.Structure;
 using Emgu.CV.Util;
 
-namespace CalendarParse.Cli.Services;
+namespace CalendarParse.Parsing.Services;
 
 /// <summary>Timing and shift-state snapshot captured at a named pipeline step boundary.</summary>
 public record StepSnapshot(
@@ -88,7 +90,7 @@ public sealed class HybridCalendarService : ICalendarParseService
     private readonly OllamaCalendarService _ollama;
     private readonly WindowsImagePreprocessor _preprocessor;
     private readonly WindowsTableDetector _tableDetector;
-    private readonly WindowsWinRtOcrService _winRtOcr;
+    private readonly IOcrService _winRtOcr;
     private readonly List<string> _sessionNames = new();
     private int _llmCalls;
     private int _retryCount;
@@ -114,12 +116,17 @@ public sealed class HybridCalendarService : ICalendarParseService
         string baseUrl = OllamaCalendarService.DefaultBaseUrl,
         string model   = OllamaCalendarService.DefaultModel,
         IEnumerable<string>? knownNames = null,
-        OllamaCalendarService? llmBackend = null)
+        OllamaCalendarService? llmBackend = null,
+        IOcrService? ocrService = null)
     {
-        _ollama      = llmBackend ?? new OllamaCalendarService(baseUrl, model, knownNames);
-        _preprocessor = new WindowsImagePreprocessor();
+        _ollama        = llmBackend ?? new OllamaCalendarService(baseUrl, model, knownNames);
+        _preprocessor  = new WindowsImagePreprocessor();
         _tableDetector = new WindowsTableDetector();
-        _winRtOcr    = new WindowsWinRtOcrService();
+#if WINDOWS
+        _winRtOcr = ocrService ?? new WindowsWinRtOcrService();
+#else
+        _winRtOcr = ocrService ?? new TesseractOcrService(Path.Combine(AppContext.BaseDirectory, "tessdata"));
+#endif
     }
 
     /// <summary>Adds names seen in previous images so OCR supplementation can resolve fragments.</summary>
@@ -186,11 +193,34 @@ public sealed class HybridCalendarService : ICalendarParseService
         // ── Derive day column bounds from OCR day-name headers ────────────────
         var dayColBounds  = ComputeDayColBoundsFromOcr(ocrElements, imageWidth);
         bool gridReliable = dayColBounds.Count >= 4;
+        // colsFromOcr tracks whether column bounds came from OCR (vs grid-line fallback).
+        // Only OCR-derived bounds are trusted for strip-LLM mode; grid-line bounds give
+        // us geometry (for OCR alignment, x-marks, cell positions) but strip-LLM on those
+        // images regresses vs full-image LLM.
+        bool colsFromOcr  = gridReliable;
         {
             string[] dn = { "Sun","Mon","Tue","Wed","Thu","Fri","Sat" };
             string found = string.Join(",", dayColBounds.Keys.OrderBy(k => k).Select(k => dn[k]));
             Console.Error.WriteLine(
                 $"    [{T()}] ocr-cols: {dayColBounds.Count} day columns located ({found}), reliable={gridReliable}");
+        }
+
+        // Fallback: if OCR could not find day column headers, use morphological
+        // vertical-line detection directly on the raw image pixels. This is fully
+        // cross-platform and handles images where OCR struggles with bold/coloured
+        // header cells (e.g. Tesseract on IM-1/2/5). Columns are assigned Sun=0…Sat=6
+        // left-to-right, matching the standard US Sun–Sat work-schedule layout.
+        if (!gridReliable)
+        {
+            var gridLineBounds = ComputeDayColBoundsFromGridLines(rawBytes, imageWidth);
+            if (gridLineBounds.Count >= 4)
+            {
+                dayColBounds = gridLineBounds;
+                gridReliable = true;  // column geometry is now known (OCR alignment, x-marks, positions)
+                // colsFromOcr intentionally NOT set — strip-LLM mode stays off for grid-line columns
+                Console.Error.WriteLine(
+                    $"    [{T()}] grid-fallback: OCR→grid-lines, {gridLineBounds.Count} columns");
+            }
         }
 
         // ── OCR-based date override ────────────────────────────────────────────
@@ -237,6 +267,72 @@ public sealed class HybridCalendarService : ICalendarParseService
                 for (int i = 0; i < 7 && i < dates.Count; i++)
                     if (!string.IsNullOrEmpty(ocrIsoDates[i]))
                         dates[i] = ocrIsoDates[i];
+            }
+        }
+
+        // ── Header-strip LLM fallback when OCR date extraction failed ─────────
+        // When the grid-line fallback was used (colsFromOcr=false), Tesseract OCR
+        // could not read date tokens from the header row (produces garbage on hard
+        // images).  Re-query the LLM on a focused crop of just the header row above
+        // the date columns — fixes month hallucinations like "January" for September.
+        // Only fires when !colsFromOcr, so the WinRT path is unaffected.
+        if (!colsFromOcr && gridReliable)
+        {
+            // Crop: full-width top strip — captures the title/month text which
+            // may be in the left name column area, not just over the data columns
+            const int headerStripH = 300;
+            byte[] headerBytes;
+            {
+                using var src = new Mat();
+                CvInvoke.Imdecode(rawBytes, ImreadModes.ColorBgr, src);
+                int safeH = Math.Min(headerStripH, src.Height);
+                using var roi = new Mat(src, new System.Drawing.Rectangle(0, 0, src.Width, safeH));
+                var buf = new VectorOfByte();
+                CvInvoke.Imencode(".jpg", roi, buf,
+                    new KeyValuePair<ImwriteFlags, int>(ImwriteFlags.JpegQuality, 92));
+                headerBytes = buf.ToArray();
+            }
+            // DIAG: write header crop for visual inspection
+            if (System.Environment.GetEnvironmentVariable("TESS_DIAG") == "1")
+            {
+                string diagPath = Path.Combine(Path.GetTempPath(), "header-crop-diag.jpg");
+                System.IO.File.WriteAllBytes(diagPath, headerBytes);
+                Console.Error.WriteLine($"[TESS_DIAG] header crop written to: {diagPath}  (full-width x 0..{headerStripH})");
+            }
+            string headerBase64 = Convert.ToBase64String(headerBytes);
+            _llmCalls++;
+            var (hMonth, hYear, hDates) = await _ollama.ExtractHeaderAsync(headerBase64, ct);
+            int hMonthNum   = Array.IndexOf(MonthNames, hMonth);
+            int llmMonthNum = Array.IndexOf(MonthNames, month);
+            Console.Error.WriteLine($"    [{T()}] header-strip-llm: got ({hMonth} {hYear}) vs full-img ({month} {year})");
+            if (hMonthNum >= 1 && hMonthNum != llmMonthNum)
+            {
+                int effectiveYear = hYear > 0 ? hYear : year;
+                Console.Error.WriteLine(
+                    $"    [{T()}] header-strip-llm: override ({month} {year}) -> ({hMonth} {effectiveYear})");
+                month = hMonth;
+                if (hYear > 0) year = hYear;
+                // Prefer dates returned by the header-strip LLM (correct day numbers).
+                // Fall back to regenerating from the original wrong-month dates if the
+                // header-strip dates are unusable (wrong count or wrong month).
+                bool hDatesValid = hDates.Count == dates.Count
+                    && hDates.All(d => DateTime.TryParse(d, out var hdt) && hdt.Month == hMonthNum);
+                if (hDatesValid)
+                {
+                    Console.Error.WriteLine($"    [{T()}] header-strip-llm: using hDates (correct day numbers)");
+                    for (int i = 0; i < dates.Count; i++)
+                        dates[i] = hDates[i];
+                }
+                else
+                {
+                    // Regenerate ISO dates from the corrected month+year, preserving day
+                    for (int i = 0; i < dates.Count; i++)
+                    {
+                        if (DateTime.TryParse(dates[i], out var dt))
+                            dates[i] = new DateTime(effectiveYear > 0 ? effectiveYear : dt.Year,
+                                                    hMonthNum, dt.Day).ToString("yyyy-MM-dd");
+                    }
+                }
             }
         }
 
@@ -532,9 +628,11 @@ public sealed class HybridCalendarService : ICalendarParseService
                 continue;
             }
 
-            // Build the query image: column strip if grid is reliable, else full image
+            // Build the query image: column strip if OCR found columns, else full image.
+            // Grid-line columns (colsFromOcr=false) use full-image LLM — strip mode is
+            // worse for images where OCR couldn't locate headers (e.g. IM-3, IM-5).
             byte[] queryImage;
-            bool   usingStrip = gridReliable && dayColBounds.ContainsKey(dayIdx);
+            bool   usingStrip = colsFromOcr && dayColBounds.ContainsKey(dayIdx);
 
             if (usingStrip)
             {
@@ -825,6 +923,133 @@ public sealed class HybridCalendarService : ICalendarParseService
     }
 
     // ── OCR column boundary detection ─────────────────────────────────────────
+
+    /// <summary>
+    /// Fallback column-bounds detector using morphological vertical-line detection.
+    /// Works cross-platform without needing to read header text. Detects vertical
+    /// grid lines via adaptive threshold + morphological erode/dilate, projects them
+    /// to a 1-D column profile, finds peak x-positions, then picks the 8 most
+    /// evenly-spaced lines to form 7 day columns assigned Sun=0…Sat=6 left-to-right.
+    /// Returns an empty dictionary when fewer than 8 clear vertical lines are found.
+    /// </summary>
+    private static Dictionary<int, (int XStart, int XEnd)> ComputeDayColBoundsFromGridLines(
+        byte[] rawBytes, int imageWidth)
+    {
+        using var src = new Mat();
+        CvInvoke.Imdecode(rawBytes, ImreadModes.Grayscale, src);
+        int rows = src.Rows;
+
+        // Binarize: dark grid lines → white, light background → black.
+        using var blurred = new Mat();
+        CvInvoke.GaussianBlur(src, blurred, new System.Drawing.Size(3, 3), 0);
+        using var binary = new Mat();
+        CvInvoke.AdaptiveThreshold(blurred, binary, 255,
+            AdaptiveThresholdType.GaussianC, ThresholdType.BinaryInv, 15, 2);
+
+        // Isolate vertical lines using the same morphological approach as WindowsTableDetector.
+        int vLen = Math.Max(rows / 20, 20);
+        using var vKernel = CvInvoke.GetStructuringElement(
+            MorphShapes.Rectangle,
+            new System.Drawing.Size(1, vLen),
+            new System.Drawing.Point(-1, -1));
+        using var vertical = new Mat();
+        CvInvoke.MorphologyEx(binary, vertical, MorphOp.Erode, vKernel,
+            new System.Drawing.Point(-1, -1), 1, BorderType.Default, new MCvScalar(0));
+        CvInvoke.MorphologyEx(vertical, vertical, MorphOp.Dilate, vKernel,
+            new System.Drawing.Point(-1, -1), 1, BorderType.Default, new MCvScalar(0));
+
+        // Project the vertical mask to a 1-D column profile: sum each column.
+        // Convert to float first so the 0/255 per-pixel values don't overflow on sum.
+        using var vertF = new Mat();
+        vertical.ConvertTo(vertF, DepthType.Cv32F);
+        using var projection = new Mat();
+        CvInvoke.Reduce(vertF, projection, ReduceDimension.SingleRow, ReduceType.ReduceSum);
+
+        float[] colSums = new float[imageWidth];
+        Marshal.Copy(projection.DataPointer, colSums, 0, imageWidth);
+
+        // Find x-positions of vertical lines: runs of columns above threshold.
+        // A genuine grid line must cover ≥15% of the image height.
+        float threshold = rows * 255f * 0.15f;
+        var lineXs = new List<int>();
+        bool inPeak = false;
+        int peakStart = 0;
+        for (int x = 0; x < imageWidth; x++)
+        {
+            if (colSums[x] >= threshold)
+            {
+                if (!inPeak) { inPeak = true; peakStart = x; }
+            }
+            else if (inPeak)
+            {
+                inPeak = false;
+                lineXs.Add((peakStart + x - 1) / 2);  // centre of peak region
+            }
+        }
+        if (inPeak) lineXs.Add((peakStart + imageWidth - 1) / 2);
+
+        // Merge peaks that are too close together (same thick grid-line detected as two
+        // adjacent peaks). Keep only the first peak per <minGap> window.
+        int minGap = Math.Max(imageWidth / 30, 15);
+        {
+            var merged = new List<int>();
+            int prev = -minGap - 1;   // safely negative; avoids int.MinValue overflow
+            foreach (int x in lineXs)
+            {
+                if (x - prev >= minGap) { merged.Add(x); prev = x; }
+            }
+            lineXs = merged;
+        }
+
+        Console.Error.WriteLine(
+            $"    [grid-cols] {lineXs.Count} vertical lines after dedup");
+
+        // Need at least 8 lines to bound 7 day columns.
+        if (lineXs.Count < 8) return new();
+
+        // If more than 8 lines (e.g. outer border + name-column dividers), pick the 8
+        // consecutive lines with the smallest spacing variance — those are the
+        // evenly-spaced day-column dividers.
+        int bestStart = 0;
+        double bestVar = double.MaxValue;
+        for (int s = 0; s <= lineXs.Count - 8; s++)
+        {
+            double mean = 0;
+            for (int i = 0; i < 7; i++) mean += lineXs[s + i + 1] - lineXs[s + i];
+            mean /= 7;
+            double variance = 0;
+            for (int i = 0; i < 7; i++)
+            {
+                double d = (lineXs[s + i + 1] - lineXs[s + i]) - mean;
+                variance += d * d;
+            }
+            if (variance < bestVar) { bestVar = variance; bestStart = s; }
+        }
+
+        var dayLines = lineXs.Skip(bestStart).Take(8).ToList();
+
+        // Validate that the 7 column widths are reasonably uniform.
+        // Coefficient of variation (stddev / mean) > 25% indicates the 8 lines
+        // don't represent equally-spaced day columns — likely mixing in name-column
+        // dividers or outer borders.
+        double meanW = 0;
+        for (int i = 0; i < 7; i++) meanW += dayLines[i + 1] - dayLines[i];
+        meanW /= 7;
+        double cv = Math.Sqrt(bestVar / 7.0) / meanW;
+        Console.Error.WriteLine(
+            $"    [grid-cols] best 8 at x=[{string.Join(",", dayLines)}] cv={cv:P0}");
+
+        if (cv > 0.25)
+        {
+            Console.Error.WriteLine($"    [grid-cols] rejected: CV {cv:P0} > 25%, columns too uneven");
+            return new();
+        }
+
+        var result = new Dictionary<int, (int XStart, int XEnd)>();
+        for (int i = 0; i < 7; i++)
+            result[i] = (dayLines[i], dayLines[i + 1]);
+        return result;
+    }
 
     /// <summary>
     /// Scans WinRT OCR elements for day-name tokens (Sun–Sat) and uses

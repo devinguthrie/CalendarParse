@@ -138,10 +138,20 @@ public partial class HistoryPage : ContentPage
             return;
         }
 
-        var imageBytes = await File.ReadAllBytesAsync(run.ImagePath);
-        var prefs      = await _db.GetPreferencesAsync();
+        var imageBytes   = await File.ReadAllBytesAsync(run.ImagePath);
+        var prefs        = await _db.GetPreferencesAsync();
+        var employeeName = prefs.EmployeeName?.Trim() ?? string.Empty;
 
-        var jobId = await _api.SubmitAsync(imageBytes, prefs.EmployeeName ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(employeeName))
+        {
+            await DisplayAlertAsync(
+                "Search Name Required",
+                "Set your name in Settings before retrying so the parser only returns one employee's shifts.",
+                "OK");
+            return;
+        }
+
+        var jobId = await _api.SubmitAsync(imageBytes, employeeName);
         if (jobId is null)
         {
             await DisplayAlertAsync("Error", "Could not reach server. Check Settings.", "OK");

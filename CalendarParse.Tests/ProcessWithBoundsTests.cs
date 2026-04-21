@@ -1,4 +1,4 @@
-using CalendarParse.Cli.Services;
+using CalendarParse.Parsing.Services;
 using CalendarParse.Services;
 
 namespace CalendarParse.Tests;

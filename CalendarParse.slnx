@@ -4,4 +4,5 @@
   <Project Path="CalendarParse.Core/CalendarParse.Core.csproj" />
   <Project Path="CalendarParse.Api/CalendarParse.Api.csproj" />
   <Project Path="CalendarParse.Cli/CalendarParse.Cli.csproj" />
+  <Project Path="CalendarParse.Parsing/CalendarParse.Parsing.csproj" />
 </Solution>

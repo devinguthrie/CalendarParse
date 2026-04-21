@@ -116,6 +116,7 @@ namespace CalendarParse
                 await AddColumnIfMissingAsync(db, "ALTER TABLE AppPreferences ADD COLUMN QuietHoursEnd TEXT NOT NULL DEFAULT '07:00'");
                 await AddColumnIfMissingAsync(db, "ALTER TABLE AppPreferences ADD COLUMN PositionOptIn INTEGER");
                 // ── PendingConfirmations ───────────────────────────────────────
+                await AddColumnIfMissingAsync(db, "ALTER TABLE PendingConfirmations ADD COLUMN JobId TEXT");
                 await AddColumnIfMissingAsync(db, "ALTER TABLE PendingConfirmations ADD COLUMN ShiftsJson TEXT NOT NULL DEFAULT ''");
                 await AddColumnIfMissingAsync(db, "ALTER TABLE PendingConfirmations ADD COLUMN QueuedAt TEXT NOT NULL DEFAULT '2000-01-01'");
 

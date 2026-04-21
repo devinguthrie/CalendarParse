@@ -1,5 +1,5 @@
 using System.Net;
-using CalendarParse.Cli.Services;
+using CalendarParse.Parsing.Services;
 
 namespace CalendarParse.Tests;
 

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "dependencies": {
-    "net10.0-windows10.0.19041": {
+    "net10.0": {
       "Microsoft.EntityFrameworkCore.Sqlite": {
         "type": "Direct",
         "requested": "[9.0.3, )",
@@ -145,16 +145,22 @@
           "SQLitePCLRaw.core": "2.1.10"
         }
       },
-      "calendarparse.cli": {
+      "Tesseract": {
+        "type": "Transitive",
+        "resolved": "5.2.0",
+        "contentHash": "YB7feJlrTWSXtK8+WaCcseGSPK/1r2d2FWeKGyndlrPwYClrzTlCoHD4/oQEUjKafmpkWlhTZZ7pxiRJYZgj6w=="
+      },
+      "calendarparse.core": {
+        "type": "Project"
+      },
+      "calendarparse.parsing": {
         "type": "Project",
         "dependencies": {
           "CalendarParse.Core": "[1.0.0, )",
           "Emgu.CV": "[4.12.0.5764, )",
-          "Emgu.CV.runtime.windows": "[4.12.0.5764, )"
+          "Emgu.CV.runtime.windows": "[4.12.0.5764, )",
+          "Tesseract": "[5.2.0, )"
         }
-      },
-      "calendarparse.core": {
-        "type": "Project"
       }
     }
   }

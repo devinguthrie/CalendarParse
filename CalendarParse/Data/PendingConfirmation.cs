@@ -6,7 +6,8 @@ namespace CalendarParse.Data;
 /// </summary>
 public class PendingConfirmation
 {
-    public int    Id        { get; set; }
+    public int    Id         { get; set; }
+    public string? JobId     { get; set; }
     public string ShiftsJson { get; set; } = string.Empty;
     public DateTime QueuedAt { get; set; } = DateTime.UtcNow;
 }

@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
-    <!-- Required for WinRT types transitively pulled in by CalendarParse.Cli -->
+    <!-- Required for WinRT types in CalendarParse.Parsing (WindowsWinRtOcrService) -->
     <UseWindowsForms>false</UseWindowsForms>
   </PropertyGroup>
 
@@ -23,7 +23,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\CalendarParse.Core\CalendarParse.Core.csproj" />
-    <ProjectReference Include="..\CalendarParse.Cli\CalendarParse.Cli.csproj" />
+    <ProjectReference Include="..\CalendarParse.Parsing\CalendarParse.Parsing.csproj" />
   </ItemGroup>
 
 </Project>

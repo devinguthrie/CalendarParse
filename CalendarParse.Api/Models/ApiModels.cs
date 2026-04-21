@@ -25,6 +25,9 @@ public class ProcessResponse
 
 public class ConfirmRequest
 {
+    /// <summary>Server job ID associated with the confirmed shifts (optional for legacy clients).</summary>
+    public string? JobId { get; set; }
+
     /// <summary>Employee-corrected shifts after overlay confirmation.</summary>
     public List<ShiftData> Shifts { get; set; } = [];
 }

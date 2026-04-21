@@ -3,6 +3,7 @@ using CalendarParse.Data;
 using CalendarParse.Models;
 using CalendarParse.Pages;
 using CalendarParse.Services;
+using Microsoft.EntityFrameworkCore;
 using Sentry;
 
 namespace CalendarParse
@@ -37,6 +38,7 @@ namespace CalendarParse
 #if DEBUG
             OverlayHarnessBtn.IsVisible = true;
             SentryTestBtn.IsVisible = true;
+            ClearLocalDbBtn.IsVisible = true;
 #endif
         }
 
@@ -56,9 +58,13 @@ namespace CalendarParse
                 var prefs = await _db.GetPreferencesAsync();
                 if (!string.IsNullOrWhiteSpace(prefs.EmployeeName))
                     SearchEntry.Text = prefs.EmployeeName;
+                UpdateProcessButtonState();
             }
             catch { /* non-critical */ }
         }
+
+        private void OnSearchEntryTextChanged(object? sender, TextChangedEventArgs e)
+            => UpdateProcessButtonState();
 
         protected override void OnDisappearing()
         {
@@ -108,9 +114,9 @@ namespace CalendarParse
 
         private void SetPendingPhoto(FileResult photo)
         {
-            _pendingPhoto        = photo;
-            ProcessBtn.IsEnabled = true;
-            FileNameLabel.Text   = photo.FileName;
+            _pendingPhoto      = photo;
+            FileNameLabel.Text = photo.FileName;
+            UpdateProcessButtonState();
         }
 
         private async void OnProcessClicked(object? sender, EventArgs e)
@@ -130,11 +136,11 @@ namespace CalendarParse
         /// </summary>
         public async Task LoadMonitorImageAsync(byte[] bytes, bool autoProcess)
         {
-            _pendingImageBytes         = bytes;
-            _pendingPhoto              = null;
-            FileNameLabel.Text         = "Image from monitored conversation";
-            ProcessBtn.IsEnabled       = true;
+            _pendingImageBytes            = bytes;
+            _pendingPhoto                 = null;
+            FileNameLabel.Text            = "Image from monitored conversation";
             MonitorBannerBorder.IsVisible = true;
+            UpdateProcessButtonState();
 
             System.Diagnostics.Debug.WriteLine(
                 $"[MainPage] LoadMonitorImageAsync autoProcess={autoProcess} bytes={bytes.Length:N0}");
@@ -153,6 +159,17 @@ namespace CalendarParse
 
         private async Task SubmitBytesAsync(byte[] imageBytes)
         {
+            var employeeName = SearchEntry.Text?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(employeeName))
+            {
+                await DisplayAlertAsync(
+                    "Search Name Required",
+                    "Enter the employee name in Search Name before processing so the parser only returns that person's shifts.",
+                    "OK");
+                UpdateProcessButtonState();
+                return;
+            }
+
             ProcessBtn.IsEnabled  = false;
             StatusLabel.Text      = "Submitting…";
             StatusLabel.IsVisible = true;
@@ -161,9 +178,6 @@ namespace CalendarParse
 
             try
             {
-                var prefs        = await _db.GetPreferencesAsync();
-                var employeeName = prefs.EmployeeName ?? SearchEntry.Text?.Trim() ?? string.Empty;
-
                 // Save image locally so the overlay can display it later
                 var imagePath = await SaveImageLocallyAsync(imageBytes);
 
@@ -181,21 +195,29 @@ namespace CalendarParse
                 ProcessingTitleLabel.IsVisible = true;
                 StatusLabel.Text               = "Submitted! Processing takes ~2 min.";
 
-                _pendingPhoto              = null;
-                _pendingImageBytes         = null;
-                ProcessBtn.IsEnabled       = false;
-                FileNameLabel.Text         = "No file selected";
+                _pendingPhoto                 = null;
+                _pendingImageBytes            = null;
+                FileNameLabel.Text            = "No file selected";
                 MonitorBannerBorder.IsVisible = false;
+                UpdateProcessButtonState();
             }
             catch (Exception ex)
             {
                 await DisplayAlertAsync("Error", $"Submission failed: {ex.Message}", "OK");
+                UpdateProcessButtonState();
             }
             finally
             {
                 Spinner.IsRunning = false;
                 Spinner.IsVisible = false;
             }
+        }
+
+        private void UpdateProcessButtonState()
+        {
+            bool hasImage = _pendingPhoto is not null || _pendingImageBytes is not null;
+            bool hasName = !string.IsNullOrWhiteSpace(SearchEntry.Text);
+            ProcessBtn.IsEnabled = hasImage && hasName;
         }
 
         private static async Task<string?> SaveImageLocallyAsync(byte[] imageBytes)
@@ -224,6 +246,18 @@ namespace CalendarParse
         {
             SentrySdk.CaptureMessage("Hello from CalendarParse MAUI!", SentryLevel.Info);
             DisplayAlert("Sentry", "Test event sent — check your Sentry dashboard.", "OK");
+        }
+
+        private async void OnClearLocalDbClicked(object? sender, EventArgs e)
+        {
+            bool confirmed = await DisplayAlertAsync(
+                "Clear Local DB",
+                "Delete all schedule runs and pending confirmations from the local database? Settings are kept.",
+                "Clear", "Cancel");
+            if (!confirmed) return;
+            await _db.Database.ExecuteSqlRawAsync("DELETE FROM ScheduleRuns; DELETE FROM PendingConfirmations;");
+            await RefreshActiveJobCardAsync();
+            await DisplayAlertAsync("Done", "Local DB cleared.", "OK");
         }
 
         private async void OnOpenOverlayHarnessClicked(object? sender, EventArgs e)

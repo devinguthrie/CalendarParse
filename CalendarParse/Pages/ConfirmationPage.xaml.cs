@@ -201,6 +201,12 @@ public partial class ConfirmationPage : ContentPage
                 return;
             }
 
+            if (string.IsNullOrWhiteSpace(_employeeName))
+            {
+                ShowError("Enter your name in Settings before processing so the parser can filter to one employee.");
+                return;
+            }
+
             LoadingLabel.Text       = "Submitting to server…";
             ProgressLabel.IsVisible = false;
 
@@ -275,7 +281,7 @@ public partial class ConfirmationPage : ContentPage
         {
             var firstDate = DateTime.TryParse(_bubbles[0].Shift.Date, out var d) ? d : DateTime.Today;
             DateConfirmPicker.Date       = firstDate;
-            DateConfirmDateLabel.Text    = firstDate.ToString("dddd, MMMM d");
+            DateConfirmDateLabel.Text    = firstDate.ToString("dddd, MMMM d, yyyy");
             DatePickerActions.IsVisible  = false;
             DateConfirmPicker.IsVisible  = false;
             DateConfirmOkBtn.IsVisible   = true;
@@ -337,7 +343,7 @@ public partial class ConfirmationPage : ContentPage
                     _ = PersistProgressAsync();
             }
         }
-        DateConfirmDateLabel.Text    = (DateConfirmPicker.Date ?? DateTime.Today).ToString("dddd, MMMM d");
+        DateConfirmDateLabel.Text    = (DateConfirmPicker.Date ?? DateTime.Today).ToString("dddd, MMMM d, yyyy");
         DatePickerActions.IsVisible  = false;
         DateConfirmPicker.IsVisible  = false;
         DateConfirmOkBtn.IsVisible   = true;
@@ -1544,7 +1550,7 @@ public partial class ConfirmationPage : ContentPage
             b.Shift.Employee,
             b.Shift.Date,
             b.Shift.TimeRange,
-            b.DisplayTime,
+            ConfirmedShiftSanitizer.NormalizeTimeRange(b.DisplayTime, b.Shift.Employee),
             (int)b.State.TimeState,
             (int)b.State.PositionState,
             b.Shift.EstimatedBounds?.X,
@@ -1614,7 +1620,7 @@ public partial class ConfirmationPage : ContentPage
         {
             Employee        = b.Shift.Employee,
             Date            = b.Shift.Date,
-            TimeRange       = b.DisplayTime,
+            TimeRange       = ConfirmedShiftSanitizer.NormalizeTimeRange(b.DisplayTime, b.Shift.Employee),
             EstimatedBounds = b.Shift.EstimatedBounds,
         }).ToList();
 
@@ -1630,7 +1636,7 @@ public partial class ConfirmationPage : ContentPage
             catch { /* non-critical */ }
         }
 
-        var ok = await _viewModel.ConfirmAsync(corrected);
+        var ok = await _viewModel.ConfirmAsync(corrected, _runId);
         if (!ok)
         {
             await DisplayAlertAsync("Network Error",

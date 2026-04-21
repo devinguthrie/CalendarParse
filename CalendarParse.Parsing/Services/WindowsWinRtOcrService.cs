@@ -1,3 +1,4 @@
+#if WINDOWS
 using Windows.Globalization;
 using Windows.Graphics.Imaging;
 using Windows.Media.Ocr;
@@ -5,7 +6,7 @@ using Windows.Storage.Streams;
 using CalendarParse.Services;
 using ModelRect = CalendarParse.Models.Rect;
 
-namespace CalendarParse.Cli.Services
+namespace CalendarParse.Parsing.Services
 {
     /// <summary>
     /// Windows implementation of <see cref="IOcrService"/> using the built-in
@@ -94,3 +95,4 @@ namespace CalendarParse.Cli.Services
         }
     }
 }
+#endif // WINDOWS

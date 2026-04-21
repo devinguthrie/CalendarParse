@@ -5,6 +5,7 @@ namespace CalendarParse.Api.Data;
 public class JobDbContext : DbContext
 {
     public DbSet<Job> Jobs { get; set; } = null!;
+    public DbSet<ConfirmedCorrection> ConfirmedCorrections { get; set; } = null!;
 
     public JobDbContext(DbContextOptions<JobDbContext> options) : base(options) { }
 
@@ -12,5 +13,8 @@ public class JobDbContext : DbContext
     {
         b.Entity<Job>().HasKey(j => j.Id);
         b.Entity<Job>().Property(j => j.Status).HasConversion<int>();
+
+        b.Entity<ConfirmedCorrection>().HasKey(c => c.Id);
+        b.Entity<ConfirmedCorrection>().Property(c => c.ShiftsJson).HasDefaultValue("[]");
     }
 }

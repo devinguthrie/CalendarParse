@@ -100,6 +100,7 @@ public class ScheduleRunSummary
 
     public bool HasWeekLabel => !string.IsNullOrEmpty(WeekStart);
 
-    public bool IsProcessing => Status == RunStatus.Processing;
-    public bool IsError      => Status == RunStatus.Error;
+    public bool IsProcessing    => Status == RunStatus.Processing;
+    public bool IsError         => Status == RunStatus.Error;
+    public bool HasErrorMessage => !string.IsNullOrWhiteSpace(ErrorMessage);
 }
