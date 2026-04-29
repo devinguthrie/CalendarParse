@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage
+    x:Class="CalendarParse.Pages.LoginPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml">
+
+    <VerticalStackLayout
+        Padding="40,0"
+        Spacing="16"
+        VerticalOptions="Center">
+
+        <Label
+            Text="CalendarParse"
+            FontSize="30"
+            FontAttributes="Bold"
+            HorizontalOptions="Center" />
+
+        <Label
+            Text="Sign in to sync your schedule"
+            FontSize="15"
+            HorizontalOptions="Center"
+            Opacity="0.65" />
+
+        <Button
+            x:Name="SignInBtn"
+            Text="Sign In"
+            Clicked="OnSignInClicked"
+            Margin="0,24,0,0"
+            HeightRequest="52" />
+
+        <Label
+            x:Name="ErrorLabel"
+            IsVisible="False"
+            TextColor="Red"
+            HorizontalOptions="Center"
+            HorizontalTextAlignment="Center"
+            Margin="0,4,0,0" />
+
+        <HorizontalStackLayout HorizontalOptions="Center" Spacing="4" Margin="0,8,0,0">
+            <Label Text="New user?" Opacity="0.55" VerticalOptions="Center" />
+            <Label
+                x:Name="SignUpLink"
+                Text="Sign Up"
+                TextDecorations="Underline"
+                TextColor="{DynamicResource Primary}"
+                VerticalOptions="Center">
+                <Label.GestureRecognizers>
+                    <TapGestureRecognizer Tapped="OnSignUpTapped" />
+                </Label.GestureRecognizers>
+            </Label>
+        </HorizontalStackLayout>
+
+    </VerticalStackLayout>
+
+</ContentPage>

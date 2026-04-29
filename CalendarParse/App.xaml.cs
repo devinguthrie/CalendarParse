@@ -14,31 +14,13 @@ namespace CalendarParse
 
         protected override Window CreateWindow(IActivationState? activationState)
         {
-            // Initialize DB (EnsureCreated) before first navigation
-            _ = InitAsync();
-
-            return new Window(new AppShell());
-        }
-
-        private static async Task InitAsync()
-        {
             var services = IPlatformApplication.Current!.Services;
-            try
-            {
-                await MauiProgram.InitializeDatabaseAsync(services);
-                await MauiProgram.ResumeInFlightJobsAsync(services);
-                await RetryPendingConfirmationsAsync(services);
-            }
-            catch (Exception ex)
-            {
-                // InitializeDatabaseAsync already handles corrupt-DB reset internally.
-                // Any remaining exception is unrecoverable — log and continue.
-                System.Diagnostics.Debug.WriteLine($"[App] DB init failed: {ex.Message}");
-            }
 
 #if ANDROID
             WireNotificationMonitor();
 #endif
+
+            return new Window(services.GetRequiredService<Pages.LoadingPage>());
         }
 
         protected override void OnResume()

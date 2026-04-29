@@ -44,6 +44,96 @@
       "calendarparse.core": {
         "type": "Project"
       }
+    },
+    "net10.0-windows10.0.19041": {
+      "Emgu.CV": {
+        "type": "Direct",
+        "requested": "[4.12.0.5764, )",
+        "resolved": "4.12.0.5764",
+        "contentHash": "629jbQI7SjB6EviVwunEliIojnap2Pa239/phyjkrhMoQNJk43dWJBOhH4U9nLsOsKLSX4Xyv82t38xcXq4qyQ=="
+      },
+      "Emgu.CV.runtime.windows": {
+        "type": "Direct",
+        "requested": "[4.12.0.5764, )",
+        "resolved": "4.12.0.5764",
+        "contentHash": "RCOAc9kmxZp5F050ygd3pLTBFnSZWdxai/Dnyr/Q2EEV2R4JgXu+OoB4fr83GLeytTkll9WAeVWLRTDve9ijIA==",
+        "dependencies": {
+          "Emgu.CV": "4.12.0",
+          "Emgu.runtime.windows.msvc.rt.arm64": "19.44.35214",
+          "Emgu.runtime.windows.msvc.rt.x64": "19.44.35214",
+          "Emgu.runtime.windows.msvc.rt.x86": "19.44.35214"
+        }
+      },
+      "Microsoft.WindowsAppSDK.AI": {
+        "type": "Direct",
+        "requested": "[1.8.53, )",
+        "resolved": "1.8.53",
+        "contentHash": "bRzx+VwQY/OXxFJYML9riOrds7sBrCNpDG6Aok8KiH+TcdE6HnWjNzxJBDe/dQRTXQO5OQa9I7LNjN8NAZ1fjg==",
+        "dependencies": {
+          "Microsoft.WindowsAppSDK.Base": "1.8.251216001",
+          "Microsoft.WindowsAppSDK.Foundation": "1.8.260222000"
+        }
+      },
+      "Tesseract": {
+        "type": "Direct",
+        "requested": "[5.2.0, )",
+        "resolved": "5.2.0",
+        "contentHash": "YB7feJlrTWSXtK8+WaCcseGSPK/1r2d2FWeKGyndlrPwYClrzTlCoHD4/oQEUjKafmpkWlhTZZ7pxiRJYZgj6w=="
+      },
+      "Emgu.runtime.windows.msvc.rt.arm64": {
+        "type": "Transitive",
+        "resolved": "19.44.35214",
+        "contentHash": "ugNJFVV01rvFAnS3swIm9TJiK/x2AlNZXOCB4bwp7U5gLZ35eUV62mnHqG6/yRk/I/k9aUjZZ/zwHFrHrgZyvg=="
+      },
+      "Emgu.runtime.windows.msvc.rt.x64": {
+        "type": "Transitive",
+        "resolved": "19.44.35214",
+        "contentHash": "QGKE7bohY7tLy7iBMJTY+VXQbM2nLVA7AFQLrqPHIK7bWTOPgeIbITefjUwYyxD/wFXwj93GOQq7VIAzDyNztA=="
+      },
+      "Emgu.runtime.windows.msvc.rt.x86": {
+        "type": "Transitive",
+        "resolved": "19.44.35214",
+        "contentHash": "Cgs6eutsi7s4vO79djADbOpXdKG5x1tq4R4hq5wDIv58FimSQyIiRvnkCbZzRMUcIpXOX09W4y7P2XKS9UfSYw=="
+      },
+      "Microsoft.Windows.SDK.BuildTools": {
+        "type": "Transitive",
+        "resolved": "10.0.26100.4654",
+        "contentHash": "2mgcOlj/t2RfSyyw+pVESfO+Tk1RkfQzto9Vrq42M1lUQIfQEwbi8QLha9GXWIOj+TFzeHIEJckIoF25mgiM8A=="
+      },
+      "Microsoft.Windows.SDK.BuildTools.MSIX": {
+        "type": "Transitive",
+        "resolved": "1.7.20250829.1",
+        "contentHash": "IMdvRmCIZnBS5GkYnv0po1bcx6U1OF39pqA4TphQ9evDzpCRoSE19/PkDvlUNNrBavTsLIEJgd/TAIFner75ow=="
+      },
+      "Microsoft.WindowsAppSDK.Base": {
+        "type": "Transitive",
+        "resolved": "1.8.251216001",
+        "contentHash": "PS1wriuFknz3W2F2P/e6RvOTM35w89Lsj/f0QmUEPrJjKnc+jM0JLX1vfdytI14y1gNRUTm9uclwP0aH/SVU5w==",
+        "dependencies": {
+          "Microsoft.Windows.SDK.BuildTools": "10.0.26100.4654",
+          "Microsoft.Windows.SDK.BuildTools.MSIX": "1.7.20250829.1"
+        }
+      },
+      "Microsoft.WindowsAppSDK.Foundation": {
+        "type": "Transitive",
+        "resolved": "1.8.260222000",
+        "contentHash": "6YkttVINPZJU1wN2Mp3W9jStVxtStfZ/i/VJfRnGd+vIpBTDyNPdG4xV3Vj6Kcn4VU72fKJFhNHg6nR5t8nqEg==",
+        "dependencies": {
+          "Microsoft.WindowsAppSDK.Base": "1.8.251216001",
+          "Microsoft.WindowsAppSDK.InteractiveExperiences": "1.8.260125001"
+        }
+      },
+      "Microsoft.WindowsAppSDK.InteractiveExperiences": {
+        "type": "Transitive",
+        "resolved": "1.8.260125001",
+        "contentHash": "CTGFd1zhIDbnOltZ6piPvpNXFR1OaNyW3vHvhaILzpGziAgj5DPuVnU3PUp1p5iOBd382FLCBVM6nEPyu/LCOA==",
+        "dependencies": {
+          "Microsoft.WindowsAppSDK.Base": "1.8.251216001"
+        }
+      },
+      "calendarparse.core": {
+        "type": "Project"
+      }
     }
   }
 }

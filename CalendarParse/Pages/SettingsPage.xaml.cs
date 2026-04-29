@@ -1,17 +1,20 @@
 using CalendarParse.Data;
+using CalendarParse.Services;
 
 namespace CalendarParse.Pages;
 
 public partial class SettingsPage : ContentPage
 {
     private readonly ScheduleHistoryDb _db;
+    private readonly IAuthService      _authService;
     private AppPreferences? _prefs;
     private bool _loading;
 
-    public SettingsPage(ScheduleHistoryDb db)
+    public SettingsPage(ScheduleHistoryDb db, IAuthService authService)
     {
         InitializeComponent();
-        _db = db;
+        _db          = db;
+        _authService = authService;
 
         // TimePicker doesn't expose a TimeChanged event — wire via BindableProperty change
         QuietStartPicker.PropertyChanged += (_, e) =>
@@ -23,6 +26,13 @@ public partial class SettingsPage : ContentPage
     protected override async void OnAppearing()
     {
         base.OnAppearing();
+
+        // Refresh account state every time the page appears (e.g. after returning from login)
+        AccountEmailLabel.Text = _authService.IsAuthenticated
+            ? (_authService.UserEmail ?? _authService.UserName ?? "Signed in")
+            : "Not signed in";
+        SignOutBtn.IsVisible = _authService.IsAuthenticated;
+
         _loading = true;
         try
         {
@@ -40,6 +50,13 @@ public partial class SettingsPage : ContentPage
             _loading = false;
             UpdateSaveButton();
         }
+    }
+
+    private async void OnSignOutClicked(object? sender, EventArgs e)
+    {
+        await _authService.LogoutAsync();
+        Application.Current!.MainPage = new NavigationPage(
+            IPlatformApplication.Current!.Services.GetRequiredService<LoginPage>());
     }
 
     private void OnNameChanged(object? sender, TextChangedEventArgs e)        => UpdateSaveButton();

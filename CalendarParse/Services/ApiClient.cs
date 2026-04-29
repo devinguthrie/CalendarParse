@@ -1,11 +1,11 @@
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using CalendarParse.Core.Services;
 using CalendarParse.Data;
 using CalendarParse.Models;
 using Microsoft.EntityFrameworkCore;
-
 namespace CalendarParse.Services;
 
 public class HealthResult
@@ -14,6 +14,8 @@ public class HealthResult
     public bool   OllamaAvailable { get; set; }
 }
 
+public class OfflineException(string message) : Exception(message);
+
 /// <summary>
 /// HTTP client for CalendarParse.Api endpoints.
 /// All methods return null on recoverable network errors (caller shows toast + retry).
@@ -21,7 +23,8 @@ public class HealthResult
 public class ApiClient(
     IHttpClientFactory httpClientFactory,
     IServerDiscovery serverDiscovery,
-    ScheduleHistoryDb db)
+    ScheduleHistoryDb db,
+    IAuthService authService)
 {
     private static readonly JsonSerializerOptions _json =
         new() { PropertyNameCaseInsensitive = true };
@@ -83,6 +86,10 @@ public class ApiClient(
             return new ProcessOutcome(
                 new ProcessResult(body?.Shifts ?? [], null, body?.ImageWidth ?? 0, body?.ImageHeight ?? 0),
                 string.Empty);
+        }
+        catch (OfflineException ex)
+        {
+            return new ProcessOutcome(null, ex.Message);
         }
         catch (HttpRequestException)
         {
@@ -270,8 +277,21 @@ public class ApiClient(
         client.BaseAddress = new Uri(parsedBaseUri.ToString().TrimEnd('/') + "/");
         client.Timeout     = TimeSpan.FromSeconds(600); // LLM calls can take ~120s
 
-        if (!string.IsNullOrWhiteSpace(prefs.ServerKey))
-            client.DefaultRequestHeaders.Add("X-CalendarParse-Key", prefs.ServerKey);
+        // Prefer Bearer token (mobile); fall back to API key (CLI / pre-auth installs)
+        var selection = await AuthHeaderSelector.SelectAsync(authService, prefs.ServerKey);
+        switch (selection.Decision)
+        {
+            case AuthDecision.Bearer:
+                client.DefaultRequestHeaders.Authorization =
+                    new AuthenticationHeaderValue("Bearer", selection.Value);
+                break;
+            case AuthDecision.Offline:
+                throw new OfflineException("You're offline — connect to the internet and try again.");
+            case AuthDecision.ApiKey:
+                client.DefaultRequestHeaders.Add("X-CalendarParse-Key", selection.Value);
+                break;
+            // AuthDecision.None → no header; server will reject with 401
+        }
 
         return client;
     }

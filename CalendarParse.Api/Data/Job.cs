@@ -20,6 +20,9 @@ public class Job
     /// <summary>Employee name filter passed with the request.</summary>
     public string    EmployeeName { get; set; } = string.Empty;
 
+    /// <summary>Auth0 'sub' claim of the user who submitted this job. Null for CLI-submitted jobs.</summary>
+    public string?   UserId       { get; set; }
+
     /// <summary>JSON result (ProcessResponse) — populated when Status == Done.</summary>
     public string?   ResultJson   { get; set; }
 

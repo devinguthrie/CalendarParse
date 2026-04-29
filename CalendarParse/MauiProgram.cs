@@ -3,6 +3,7 @@ using CalendarParse.Services;
 using CalendarParse.ViewModels;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using System.Reflection;
 #if ANDROID
 using CalendarParse.Platforms.Android;
 #endif
@@ -14,6 +15,20 @@ namespace CalendarParse
         public static MauiApp CreateMauiApp()
         {
             var builder = MauiApp.CreateBuilder();
+
+            // ── Configuration ──────────────────────────────────────────────
+            var assembly = Assembly.GetExecutingAssembly();
+            using var stream = assembly.GetManifestResourceStream("CalendarParse.appsettings.json");
+            if (stream is not null)
+            {
+                // Parse embedded JSON and inject into ConfigurationManager directly.
+                // Avoids requiring Microsoft.Extensions.Configuration.Json which is
+                // not included in the MAUI Android TFM by default.
+                using var doc = System.Text.Json.JsonDocument.Parse(stream);
+                foreach (var (key, value) in FlattenJsonElement(doc.RootElement, string.Empty))
+                    builder.Configuration[key] = value;
+            }
+
             builder
                 .UseMauiApp<App>()
                 .UseSentry(options =>
@@ -40,6 +55,9 @@ namespace CalendarParse
                 opts.UseSqlite($"Data Source={dbPath}"),
                 ServiceLifetime.Singleton);
 
+            // ── Auth ───────────────────────────────────────────────────────
+            builder.Services.AddSingleton<IAuthService, Auth0AuthService>();
+
             // ── API services ───────────────────────────────────────────────
             builder.Services.AddHttpClient();
             builder.Services.AddSingleton<IServerDiscovery, ManualIpDiscovery>();
@@ -63,6 +81,8 @@ namespace CalendarParse
 #endif
 
             // ── Pages ──────────────────────────────────────────────────────
+            builder.Services.AddTransient<Pages.LoadingPage>();
+            builder.Services.AddTransient<Pages.LoginPage>();
             builder.Services.AddSingleton<MainPage>();
             builder.Services.AddTransient<Pages.SettingsPage>();
             builder.Services.AddTransient<Pages.MonitorSetupPage>();
@@ -148,6 +168,29 @@ namespace CalendarParse
                 .SingleAsync();
             if (exists == 0)
                 await db.Database.ExecuteSqlRawAsync(alterSql);
+        }
+
+        private static IEnumerable<KeyValuePair<string, string?>> FlattenJsonElement(
+            System.Text.Json.JsonElement element,
+            string prefix)
+        {
+            foreach (var prop in element.EnumerateObject())
+            {
+                var key = string.IsNullOrEmpty(prefix) ? prop.Name : $"{prefix}:{prop.Name}";
+                if (prop.Value.ValueKind == System.Text.Json.JsonValueKind.Object)
+                {
+                    foreach (var child in FlattenJsonElement(prop.Value, key))
+                        yield return child;
+                }
+                else
+                {
+                    yield return new KeyValuePair<string, string?>(
+                        key,
+                        prop.Value.ValueKind == System.Text.Json.JsonValueKind.String
+                            ? prop.Value.GetString()
+                            : prop.Value.GetRawText());
+                }
+            }
         }
 
         /// <summary>

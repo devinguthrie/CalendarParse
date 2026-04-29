@@ -2,6 +2,16 @@
   "version": 1,
   "dependencies": {
     "net10.0-android36.0": {
+      "Auth0.OidcClient.MAUI": {
+        "type": "Direct",
+        "requested": "[1.4.0, )",
+        "resolved": "1.4.0",
+        "contentHash": "MI5l2VOYwGJOaEjQTfXzM7b/5E7XjPAn+T0MBt4SZInQkclEgTdxAPqMCSCMwNi+vWmGAyOmXGuduMS0MYpLpw==",
+        "dependencies": {
+          "Auth0.OidcClient.Core": "4.2.0",
+          "Duende.IdentityModel.OidcClient": "6.0.1"
+        }
+      },
       "Emgu.CV": {
         "type": "Direct",
         "requested": "[4.12.0.5764, )",
@@ -116,6 +126,30 @@
           "Xamarin.GooglePlayServices.Base": "118.10.0.1",
           "Xamarin.GooglePlayServices.Basement": "118.10.0.1",
           "Xamarin.GooglePlayServices.MLKit.Text.Recognition": "119.0.1.7"
+        }
+      },
+      "Auth0.OidcClient.Core": {
+        "type": "Transitive",
+        "resolved": "4.2.0",
+        "contentHash": "JsntfeBhXe4Lvn6/Pk1qv72Kkdw20VSHuzCXTAFNc0I1l70FzrsnGdyA068HKyhk+vXguRclTsiXiHvo2nne8A==",
+        "dependencies": {
+          "Duende.IdentityModel.OidcClient": "6.0.1",
+          "Microsoft.Extensions.Logging": "6.0.0",
+          "Microsoft.IdentityModel.Protocols.OpenIdConnect": "8.12.1"
+        }
+      },
+      "Duende.IdentityModel": {
+        "type": "Transitive",
+        "resolved": "7.0.0",
+        "contentHash": "h6xvWQi9bASgroNh+6Z/BpSUpKTy/sSuc2l4twi0igSY0X0z7Y8eYMGMHB7trwdT56EGlWeXLA6qAb8VOg8ATA=="
+      },
+      "Duende.IdentityModel.OidcClient": {
+        "type": "Transitive",
+        "resolved": "6.0.1",
+        "contentHash": "9+1O6HKnEpzUAu6/v0h35cwNRNUQa2EbZnbwczO2Nr34MkrDa2BmRKoHV2tOH6VuIv0zAAJohInEIapFZAuplQ==",
+        "dependencies": {
+          "Duende.IdentityModel": "7.0.0",
+          "Microsoft.Extensions.Logging.Abstractions": "9.0.0"
         }
       },
       "GoogleGson": {
@@ -420,6 +454,53 @@
         "resolved": "10.0.0",
         "contentHash": "inRnbpCS0nwO/RuoZIAqxQUuyjaknOOnCEZB55KSMMjRhl0RQDttSmLSGsUJN3RQ3ocf5NDLFd2mOQViHqMK5w=="
       },
+      "Microsoft.IdentityModel.Abstractions": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "JzWhET0VOCORyJbqDc1Wtdl8Q/l+I1MjFB0I/Jko+Ma691JZll8X6o9XwZtUce8FkqGuV4uY4/V1808XZOpDVg=="
+      },
+      "Microsoft.IdentityModel.JsonWebTokens": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "imi3xiRLzzKxN4m1aR9Z2X8GUmNsVH7GLA6AkwYStNnh3UzupFtHEEVk3GK1fCvnYdRbpnCGNYY6WQb9AfDAKg==",
+        "dependencies": {
+          "Microsoft.IdentityModel.Tokens": "8.12.1"
+        }
+      },
+      "Microsoft.IdentityModel.Logging": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "39HjVkU7Voe2jRLmORRB5PoTmta1ZPKzUZCc6ldlNlLzdx+um0+fAnvfk05LUQPrNxpvb5ZoqF00SrNvyO2Fzg==",
+        "dependencies": {
+          "Microsoft.IdentityModel.Abstractions": "8.12.1"
+        }
+      },
+      "Microsoft.IdentityModel.Protocols": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "+M1H++iZUISH76R0SEthCcYtMtX1HHL3Urhs8bprGl89eCVuJ/oYfyEqfgQZSF8ct7sDeOIFFeDtRi6hMJzYVw==",
+        "dependencies": {
+          "Microsoft.IdentityModel.Tokens": "8.12.1"
+        }
+      },
+      "Microsoft.IdentityModel.Protocols.OpenIdConnect": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "zw/suf3JPTfdLBHcymlUWONhZ1o/wU/OYcBmnluaTU7ziZylHPQIXxoF0byJcRUFtxhLz9KfeyaadQi7lpzJGA==",
+        "dependencies": {
+          "Microsoft.IdentityModel.Protocols": "8.12.1",
+          "System.IdentityModel.Tokens.Jwt": "8.12.1"
+        }
+      },
+      "Microsoft.IdentityModel.Tokens": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "DzgPEABn3eZmIk4lhov0QPcoHkIbnAfgkyDPM7uGuWDHeockR9DdqNCD9Zy30hPfExu5VhbOXn9oPRi+tFUhEQ==",
+        "dependencies": {
+          "Microsoft.Extensions.Logging.Abstractions": "8.0.0",
+          "Microsoft.IdentityModel.Logging": "8.12.1"
+        }
+      },
       "Microsoft.Maui.Controls.Build.Tasks": {
         "type": "Transitive",
         "resolved": "10.0.20",
@@ -621,6 +702,15 @@
           "System.Composition.AttributedModel": "7.0.0",
           "System.Composition.Hosting": "7.0.0",
           "System.Composition.Runtime": "7.0.0"
+        }
+      },
+      "System.IdentityModel.Tokens.Jwt": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "jlYdVOJrdeyD80ppEqKJ8BhJdrV3MjeA+seURdhC0DnD41GyUA9Ik+P7Sb571ufVVCYIx93GjeqVvY3QyQxZAA==",
+        "dependencies": {
+          "Microsoft.IdentityModel.JsonWebTokens": "8.12.1",
+          "Microsoft.IdentityModel.Tokens": "8.12.1"
         }
       },
       "Xamarin.Android.Glide": {
@@ -1960,6 +2050,17 @@
     "net10.0-android36.0/maccatalyst-x64": {},
     "net10.0-android36.0/win-x64": {},
     "net10.0-ios26.2": {
+      "Auth0.OidcClient.MAUI": {
+        "type": "Direct",
+        "requested": "[1.4.0, )",
+        "resolved": "1.4.0",
+        "contentHash": "MI5l2VOYwGJOaEjQTfXzM7b/5E7XjPAn+T0MBt4SZInQkclEgTdxAPqMCSCMwNi+vWmGAyOmXGuduMS0MYpLpw==",
+        "dependencies": {
+          "Auth0.OidcClient.Core": "4.2.0",
+          "Duende.IdentityModel.OidcClient": "6.0.1",
+          "System.Runtime.InteropServices.NFloat.Internal": "6.0.1"
+        }
+      },
       "Microsoft.EntityFrameworkCore.Design": {
         "type": "Direct",
         "requested": "[9.0.3, )",
@@ -2045,6 +2146,30 @@
         "contentHash": "QuU7gSJC0Kv3PrDeE7It2nBYXwhv/Hm5IPzX9QkNAsaBZAOXvyL/lYhpmOvyTe+ZJ9Bq8fmhj/CIMC3eXPCFwA==",
         "dependencies": {
           "Sentry.Extensions.Logging": "6.3.1"
+        }
+      },
+      "Auth0.OidcClient.Core": {
+        "type": "Transitive",
+        "resolved": "4.2.0",
+        "contentHash": "JsntfeBhXe4Lvn6/Pk1qv72Kkdw20VSHuzCXTAFNc0I1l70FzrsnGdyA068HKyhk+vXguRclTsiXiHvo2nne8A==",
+        "dependencies": {
+          "Duende.IdentityModel.OidcClient": "6.0.1",
+          "Microsoft.Extensions.Logging": "6.0.0",
+          "Microsoft.IdentityModel.Protocols.OpenIdConnect": "8.12.1"
+        }
+      },
+      "Duende.IdentityModel": {
+        "type": "Transitive",
+        "resolved": "7.0.0",
+        "contentHash": "h6xvWQi9bASgroNh+6Z/BpSUpKTy/sSuc2l4twi0igSY0X0z7Y8eYMGMHB7trwdT56EGlWeXLA6qAb8VOg8ATA=="
+      },
+      "Duende.IdentityModel.OidcClient": {
+        "type": "Transitive",
+        "resolved": "6.0.1",
+        "contentHash": "9+1O6HKnEpzUAu6/v0h35cwNRNUQa2EbZnbwczO2Nr34MkrDa2BmRKoHV2tOH6VuIv0zAAJohInEIapFZAuplQ==",
+        "dependencies": {
+          "Duende.IdentityModel": "7.0.0",
+          "Microsoft.Extensions.Logging.Abstractions": "9.0.0"
         }
       },
       "Humanizer.Core": {
@@ -2335,6 +2460,53 @@
         "type": "Transitive",
         "resolved": "10.0.0",
         "contentHash": "inRnbpCS0nwO/RuoZIAqxQUuyjaknOOnCEZB55KSMMjRhl0RQDttSmLSGsUJN3RQ3ocf5NDLFd2mOQViHqMK5w=="
+      },
+      "Microsoft.IdentityModel.Abstractions": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "JzWhET0VOCORyJbqDc1Wtdl8Q/l+I1MjFB0I/Jko+Ma691JZll8X6o9XwZtUce8FkqGuV4uY4/V1808XZOpDVg=="
+      },
+      "Microsoft.IdentityModel.JsonWebTokens": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "imi3xiRLzzKxN4m1aR9Z2X8GUmNsVH7GLA6AkwYStNnh3UzupFtHEEVk3GK1fCvnYdRbpnCGNYY6WQb9AfDAKg==",
+        "dependencies": {
+          "Microsoft.IdentityModel.Tokens": "8.12.1"
+        }
+      },
+      "Microsoft.IdentityModel.Logging": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "39HjVkU7Voe2jRLmORRB5PoTmta1ZPKzUZCc6ldlNlLzdx+um0+fAnvfk05LUQPrNxpvb5ZoqF00SrNvyO2Fzg==",
+        "dependencies": {
+          "Microsoft.IdentityModel.Abstractions": "8.12.1"
+        }
+      },
+      "Microsoft.IdentityModel.Protocols": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "+M1H++iZUISH76R0SEthCcYtMtX1HHL3Urhs8bprGl89eCVuJ/oYfyEqfgQZSF8ct7sDeOIFFeDtRi6hMJzYVw==",
+        "dependencies": {
+          "Microsoft.IdentityModel.Tokens": "8.12.1"
+        }
+      },
+      "Microsoft.IdentityModel.Protocols.OpenIdConnect": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "zw/suf3JPTfdLBHcymlUWONhZ1o/wU/OYcBmnluaTU7ziZylHPQIXxoF0byJcRUFtxhLz9KfeyaadQi7lpzJGA==",
+        "dependencies": {
+          "Microsoft.IdentityModel.Protocols": "8.12.1",
+          "System.IdentityModel.Tokens.Jwt": "8.12.1"
+        }
+      },
+      "Microsoft.IdentityModel.Tokens": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "DzgPEABn3eZmIk4lhov0QPcoHkIbnAfgkyDPM7uGuWDHeockR9DdqNCD9Zy30hPfExu5VhbOXn9oPRi+tFUhEQ==",
+        "dependencies": {
+          "Microsoft.Extensions.Logging.Abstractions": "8.0.0",
+          "Microsoft.IdentityModel.Logging": "8.12.1"
+        }
       },
       "Microsoft.Maui.Controls.Build.Tasks": {
         "type": "Transitive",
@@ -2515,6 +2687,15 @@
           "System.Composition.Runtime": "7.0.0"
         }
       },
+      "System.IdentityModel.Tokens.Jwt": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "jlYdVOJrdeyD80ppEqKJ8BhJdrV3MjeA+seURdhC0DnD41GyUA9Ik+P7Sb571ufVVCYIx93GjeqVvY3QyQxZAA==",
+        "dependencies": {
+          "Microsoft.IdentityModel.JsonWebTokens": "8.12.1",
+          "Microsoft.IdentityModel.Tokens": "8.12.1"
+        }
+      },
       "System.Runtime.InteropServices.NFloat.Internal": {
         "type": "Transitive",
         "resolved": "6.0.1",
@@ -2530,6 +2711,17 @@
     "net10.0-ios26.2/maccatalyst-x64": {},
     "net10.0-ios26.2/win-x64": {},
     "net10.0-maccatalyst26.2": {
+      "Auth0.OidcClient.MAUI": {
+        "type": "Direct",
+        "requested": "[1.4.0, )",
+        "resolved": "1.4.0",
+        "contentHash": "MI5l2VOYwGJOaEjQTfXzM7b/5E7XjPAn+T0MBt4SZInQkclEgTdxAPqMCSCMwNi+vWmGAyOmXGuduMS0MYpLpw==",
+        "dependencies": {
+          "Auth0.OidcClient.Core": "4.2.0",
+          "Duende.IdentityModel.OidcClient": "6.0.1",
+          "System.Runtime.InteropServices.NFloat.Internal": "6.0.1"
+        }
+      },
       "Microsoft.EntityFrameworkCore.Design": {
         "type": "Direct",
         "requested": "[9.0.3, )",
@@ -2615,6 +2807,30 @@
         "contentHash": "QuU7gSJC0Kv3PrDeE7It2nBYXwhv/Hm5IPzX9QkNAsaBZAOXvyL/lYhpmOvyTe+ZJ9Bq8fmhj/CIMC3eXPCFwA==",
         "dependencies": {
           "Sentry.Extensions.Logging": "6.3.1"
+        }
+      },
+      "Auth0.OidcClient.Core": {
+        "type": "Transitive",
+        "resolved": "4.2.0",
+        "contentHash": "JsntfeBhXe4Lvn6/Pk1qv72Kkdw20VSHuzCXTAFNc0I1l70FzrsnGdyA068HKyhk+vXguRclTsiXiHvo2nne8A==",
+        "dependencies": {
+          "Duende.IdentityModel.OidcClient": "6.0.1",
+          "Microsoft.Extensions.Logging": "6.0.0",
+          "Microsoft.IdentityModel.Protocols.OpenIdConnect": "8.12.1"
+        }
+      },
+      "Duende.IdentityModel": {
+        "type": "Transitive",
+        "resolved": "7.0.0",
+        "contentHash": "h6xvWQi9bASgroNh+6Z/BpSUpKTy/sSuc2l4twi0igSY0X0z7Y8eYMGMHB7trwdT56EGlWeXLA6qAb8VOg8ATA=="
+      },
+      "Duende.IdentityModel.OidcClient": {
+        "type": "Transitive",
+        "resolved": "6.0.1",
+        "contentHash": "9+1O6HKnEpzUAu6/v0h35cwNRNUQa2EbZnbwczO2Nr34MkrDa2BmRKoHV2tOH6VuIv0zAAJohInEIapFZAuplQ==",
+        "dependencies": {
+          "Duende.IdentityModel": "7.0.0",
+          "Microsoft.Extensions.Logging.Abstractions": "9.0.0"
         }
       },
       "Humanizer.Core": {
@@ -2906,6 +3122,53 @@
         "resolved": "10.0.0",
         "contentHash": "inRnbpCS0nwO/RuoZIAqxQUuyjaknOOnCEZB55KSMMjRhl0RQDttSmLSGsUJN3RQ3ocf5NDLFd2mOQViHqMK5w=="
       },
+      "Microsoft.IdentityModel.Abstractions": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "JzWhET0VOCORyJbqDc1Wtdl8Q/l+I1MjFB0I/Jko+Ma691JZll8X6o9XwZtUce8FkqGuV4uY4/V1808XZOpDVg=="
+      },
+      "Microsoft.IdentityModel.JsonWebTokens": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "imi3xiRLzzKxN4m1aR9Z2X8GUmNsVH7GLA6AkwYStNnh3UzupFtHEEVk3GK1fCvnYdRbpnCGNYY6WQb9AfDAKg==",
+        "dependencies": {
+          "Microsoft.IdentityModel.Tokens": "8.12.1"
+        }
+      },
+      "Microsoft.IdentityModel.Logging": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "39HjVkU7Voe2jRLmORRB5PoTmta1ZPKzUZCc6ldlNlLzdx+um0+fAnvfk05LUQPrNxpvb5ZoqF00SrNvyO2Fzg==",
+        "dependencies": {
+          "Microsoft.IdentityModel.Abstractions": "8.12.1"
+        }
+      },
+      "Microsoft.IdentityModel.Protocols": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "+M1H++iZUISH76R0SEthCcYtMtX1HHL3Urhs8bprGl89eCVuJ/oYfyEqfgQZSF8ct7sDeOIFFeDtRi6hMJzYVw==",
+        "dependencies": {
+          "Microsoft.IdentityModel.Tokens": "8.12.1"
+        }
+      },
+      "Microsoft.IdentityModel.Protocols.OpenIdConnect": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "zw/suf3JPTfdLBHcymlUWONhZ1o/wU/OYcBmnluaTU7ziZylHPQIXxoF0byJcRUFtxhLz9KfeyaadQi7lpzJGA==",
+        "dependencies": {
+          "Microsoft.IdentityModel.Protocols": "8.12.1",
+          "System.IdentityModel.Tokens.Jwt": "8.12.1"
+        }
+      },
+      "Microsoft.IdentityModel.Tokens": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "DzgPEABn3eZmIk4lhov0QPcoHkIbnAfgkyDPM7uGuWDHeockR9DdqNCD9Zy30hPfExu5VhbOXn9oPRi+tFUhEQ==",
+        "dependencies": {
+          "Microsoft.Extensions.Logging.Abstractions": "8.0.0",
+          "Microsoft.IdentityModel.Logging": "8.12.1"
+        }
+      },
       "Microsoft.Maui.Controls.Build.Tasks": {
         "type": "Transitive",
         "resolved": "10.0.20",
@@ -3081,6 +3344,20 @@
           "System.Composition.Runtime": "7.0.0"
         }
       },
+      "System.IdentityModel.Tokens.Jwt": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "jlYdVOJrdeyD80ppEqKJ8BhJdrV3MjeA+seURdhC0DnD41GyUA9Ik+P7Sb571ufVVCYIx93GjeqVvY3QyQxZAA==",
+        "dependencies": {
+          "Microsoft.IdentityModel.JsonWebTokens": "8.12.1",
+          "Microsoft.IdentityModel.Tokens": "8.12.1"
+        }
+      },
+      "System.Runtime.InteropServices.NFloat.Internal": {
+        "type": "Transitive",
+        "resolved": "6.0.1",
+        "contentHash": "vq+81ZqZz9oHV6iWgGXFnxHAyO5xA73nfvDNu5LwymIK294is5bRo3P063VToAbDRyyc0qq/YFRYjHmiD6Cv8Q=="
+      },
       "calendarparse.core": {
         "type": "Project"
       }
@@ -3121,6 +3398,17 @@
       }
     },
     "net10.0-windows10.0.19041": {
+      "Auth0.OidcClient.MAUI": {
+        "type": "Direct",
+        "requested": "[1.4.0, )",
+        "resolved": "1.4.0",
+        "contentHash": "MI5l2VOYwGJOaEjQTfXzM7b/5E7XjPAn+T0MBt4SZInQkclEgTdxAPqMCSCMwNi+vWmGAyOmXGuduMS0MYpLpw==",
+        "dependencies": {
+          "Auth0.OidcClient.Core": "4.2.0",
+          "Duende.IdentityModel.OidcClient": "6.0.1",
+          "Microsoft.WindowsAppSDK": "1.5.240627000"
+        }
+      },
       "Microsoft.EntityFrameworkCore.Design": {
         "type": "Direct",
         "requested": "[9.0.3, )",
@@ -3200,6 +3488,30 @@
         "contentHash": "QuU7gSJC0Kv3PrDeE7It2nBYXwhv/Hm5IPzX9QkNAsaBZAOXvyL/lYhpmOvyTe+ZJ9Bq8fmhj/CIMC3eXPCFwA==",
         "dependencies": {
           "Sentry.Extensions.Logging": "6.3.1"
+        }
+      },
+      "Auth0.OidcClient.Core": {
+        "type": "Transitive",
+        "resolved": "4.2.0",
+        "contentHash": "JsntfeBhXe4Lvn6/Pk1qv72Kkdw20VSHuzCXTAFNc0I1l70FzrsnGdyA068HKyhk+vXguRclTsiXiHvo2nne8A==",
+        "dependencies": {
+          "Duende.IdentityModel.OidcClient": "6.0.1",
+          "Microsoft.Extensions.Logging": "6.0.0",
+          "Microsoft.IdentityModel.Protocols.OpenIdConnect": "8.12.1"
+        }
+      },
+      "Duende.IdentityModel": {
+        "type": "Transitive",
+        "resolved": "7.0.0",
+        "contentHash": "h6xvWQi9bASgroNh+6Z/BpSUpKTy/sSuc2l4twi0igSY0X0z7Y8eYMGMHB7trwdT56EGlWeXLA6qAb8VOg8ATA=="
+      },
+      "Duende.IdentityModel.OidcClient": {
+        "type": "Transitive",
+        "resolved": "6.0.1",
+        "contentHash": "9+1O6HKnEpzUAu6/v0h35cwNRNUQa2EbZnbwczO2Nr34MkrDa2BmRKoHV2tOH6VuIv0zAAJohInEIapFZAuplQ==",
+        "dependencies": {
+          "Duende.IdentityModel": "7.0.0",
+          "Microsoft.Extensions.Logging.Abstractions": "9.0.0"
         }
       },
       "Humanizer.Core": {
@@ -3499,6 +3811,53 @@
           "Microsoft.WindowsAppSDK": "1.6.241114003"
         }
       },
+      "Microsoft.IdentityModel.Abstractions": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "JzWhET0VOCORyJbqDc1Wtdl8Q/l+I1MjFB0I/Jko+Ma691JZll8X6o9XwZtUce8FkqGuV4uY4/V1808XZOpDVg=="
+      },
+      "Microsoft.IdentityModel.JsonWebTokens": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "imi3xiRLzzKxN4m1aR9Z2X8GUmNsVH7GLA6AkwYStNnh3UzupFtHEEVk3GK1fCvnYdRbpnCGNYY6WQb9AfDAKg==",
+        "dependencies": {
+          "Microsoft.IdentityModel.Tokens": "8.12.1"
+        }
+      },
+      "Microsoft.IdentityModel.Logging": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "39HjVkU7Voe2jRLmORRB5PoTmta1ZPKzUZCc6ldlNlLzdx+um0+fAnvfk05LUQPrNxpvb5ZoqF00SrNvyO2Fzg==",
+        "dependencies": {
+          "Microsoft.IdentityModel.Abstractions": "8.12.1"
+        }
+      },
+      "Microsoft.IdentityModel.Protocols": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "+M1H++iZUISH76R0SEthCcYtMtX1HHL3Urhs8bprGl89eCVuJ/oYfyEqfgQZSF8ct7sDeOIFFeDtRi6hMJzYVw==",
+        "dependencies": {
+          "Microsoft.IdentityModel.Tokens": "8.12.1"
+        }
+      },
+      "Microsoft.IdentityModel.Protocols.OpenIdConnect": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "zw/suf3JPTfdLBHcymlUWONhZ1o/wU/OYcBmnluaTU7ziZylHPQIXxoF0byJcRUFtxhLz9KfeyaadQi7lpzJGA==",
+        "dependencies": {
+          "Microsoft.IdentityModel.Protocols": "8.12.1",
+          "System.IdentityModel.Tokens.Jwt": "8.12.1"
+        }
+      },
+      "Microsoft.IdentityModel.Tokens": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "DzgPEABn3eZmIk4lhov0QPcoHkIbnAfgkyDPM7uGuWDHeockR9DdqNCD9Zy30hPfExu5VhbOXn9oPRi+tFUhEQ==",
+        "dependencies": {
+          "Microsoft.Extensions.Logging.Abstractions": "8.0.0",
+          "Microsoft.IdentityModel.Logging": "8.12.1"
+        }
+      },
       "Microsoft.IO.RecyclableMemoryStream": {
         "type": "Transitive",
         "resolved": "3.0.1",
@@ -3708,6 +4067,15 @@
           "System.Composition.AttributedModel": "7.0.0",
           "System.Composition.Hosting": "7.0.0",
           "System.Composition.Runtime": "7.0.0"
+        }
+      },
+      "System.IdentityModel.Tokens.Jwt": {
+        "type": "Transitive",
+        "resolved": "8.12.1",
+        "contentHash": "jlYdVOJrdeyD80ppEqKJ8BhJdrV3MjeA+seURdhC0DnD41GyUA9Ik+P7Sb571ufVVCYIx93GjeqVvY3QyQxZAA==",
+        "dependencies": {
+          "Microsoft.IdentityModel.JsonWebTokens": "8.12.1",
+          "Microsoft.IdentityModel.Tokens": "8.12.1"
         }
       },
       "calendarparse.core": {

@@ -93,8 +93,9 @@ dotnet run --project CalendarParse.Cli -- "path/to/test/images" --test --model q
 ## Documentation
 
 - **[DEPLOY.md](DEPLOY.md)** — Build, publish, and first-run setup
-- **[TODOS.md](TODOS.md)** — Open work and known issues
-- **[.github/docs/](\.github\docs\)** — Experiment logs and benchmarking notes
+- **[.github/docs/next-session-plan.md](.github/docs/next-session-plan.md)** — Forward-looking experiment plan
+- **[.github/docs/memory/state.md](.github/docs/memory/state.md)** — Current benchmark state and remaining errors
+- **[.github/docs/memory/sessions/](.github/docs/memory/sessions/)** — Per-session experiment narratives
 
 ---
 

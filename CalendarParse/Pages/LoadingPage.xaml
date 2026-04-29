@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage
+    x:Class="CalendarParse.Pages.LoadingPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml">
+
+    <Grid>
+        <ActivityIndicator
+            IsRunning="True"
+            HorizontalOptions="Center"
+            VerticalOptions="Center" />
+    </Grid>
+
+</ContentPage>

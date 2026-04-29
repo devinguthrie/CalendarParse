@@ -7,9 +7,9 @@ After **every** completed experiment — meaning any benchmark run that produces
 1. **CREATE** `.github/docs/memory/sessions/session-N.md` — a new file for this session (never edit prior session files). Include: score before/after, what was tried, outcome (committed/reverted), root cause analysis.
 2. **APPEND** one JSON line to `experiments.jsonl` (repo root, append-only). Fields: `id`, `change_type`, `description`, `score_before`, `score_after`, `total_shifts`, `outcome`, `notes`, `timestamp`.
 3. **UPDATE** `.github/docs/memory/state.md` **in-place** — update the Current Scores table, Per-Image breakdown, and Remaining Errors section.
-4. **APPEND** a row to `.github/docs/memory/anti-patterns.md` if any new anti-patterns were discovered.
-5. **APPEND** a row to `.github/docs/memory/rejected-models.md` if any new models were evaluated and rejected.
-6. **APPEND** to `.github/docs/memory/key-lessons.md` if any new architectural lessons were learned.
+4. **APPEND** a row to `.github/docs/memory/anti-patterns.md` **if** any new anti-patterns were discovered. Don't create noise if none found.
+5. **APPEND** a row to `.github/docs/memory/rejected-models.md` **if** any new models were evaluated and rejected. Don't create noise if none found.
+6. **APPEND** to `.github/docs/memory/key-lessons.md` **if** any new architectural lessons were learned. Don't create noise if none found.
 
 **Do not wait until the user asks.** Treat doc updates as the final step of every experiment, the same as reverting bad code.
 
@@ -21,7 +21,7 @@ If an experiment is REVERTED, still perform all steps above with `outcome: rever
 - **Goal**: Extract employee shift schedules from phone photos of printed grid calendars
 - **Pipeline**: `HybridCalendarService.cs` — OCR → LLM names → per-day strip LLM → x-marks → OCR name supplement → holiday heuristic
 - **Model**: `qwen2.5vl:7b` via Ollama, `temperature=0.0` (deterministic)
-- **Test set**: 5 images, 434 shifts total. Current best: **408/434 (94.0%)** (`glm-ocr`, `--glm-ocr` flag)
+- **Test set**: 5 images, 434 shifts total. Current best: **429/434 (98.8%)** (`glm-ocr`, `--glm-ocr` flag)
 - **Experiment records**: `experiments.jsonl` (repo root, append-only JSONL)
 - **Session files**: `.github/docs/memory/sessions/session-N.md`
 - **Current state**: `.github/docs/memory/state.md`
@@ -32,13 +32,13 @@ If an experiment is REVERTED, still perform all steps above with `outcome: rever
 ## Benchmark Commands
 
 ```powershell
-# GLM-OCR full benchmark (best: 408/434 = 94.0%)
+# GLM-OCR full benchmark (best: 429/434 = 98.8%)
 dotnet run --project CalendarParse.Cli --no-build -- "CalendarParse\calander-parse-test-imgs" --glm-ocr --test --model glm-ocr 2>&1 | Tee-Object benchmark-output.txt
 
 # Score summary only
 dotnet run --project CalendarParse.Cli --no-build -- "CalendarParse\calander-parse-test-imgs" --glm-ocr --test --model glm-ocr 2>&1 | Select-String "Overall|IM \("
 
-# Hybrid pipeline (parity regression: 267/434 as of session 43)
+# Hybrid pipeline (see .github/docs/memory/state.md for latest parity status)
 dotnet run --project CalendarParse.Cli --no-build -- "CalendarParse\calander-parse-test-imgs" --test --model qwen2.5vl:7b 2>&1 | Tee-Object hybrid-output.txt
 
 # Single image (faster iteration)

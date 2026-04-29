@@ -63,13 +63,16 @@ public class GlmOcrCalendarService : ICalendarParseService
 
     private readonly string _baseUrl;
     private readonly string _model;
+    private readonly IOcrService? _ocrService;
 
     public GlmOcrCalendarService(
-        string baseUrl = DefaultBaseUrl,
-        string model   = DefaultModel)
+        string baseUrl      = DefaultBaseUrl,
+        string model        = DefaultModel,
+        IOcrService? ocrService = null)
     {
-        _baseUrl = baseUrl;
-        _model   = model;
+        _baseUrl    = baseUrl;
+        _model      = model;
+        _ocrService = ocrService;
     }
 
     // Ollama GLM-OCR crashes when the model generates runaway output (200+ rows) that fills
@@ -101,6 +104,9 @@ public class GlmOcrCalendarService : ICalendarParseService
             return "ERROR: GLM-OCR returned no parseable table headers";
         if (result.Employees.Count == 0)
             return "ERROR: GLM-OCR returned no parseable employee rows";
+
+        if (_ocrService is not null)
+            await CrossReferenceXMarksAsync(result, imageBytes, ct);
 
         return BuildJson(result, nameFilter);
     }
@@ -165,7 +171,13 @@ public class GlmOcrCalendarService : ICalendarParseService
         if (Environment.GetEnvironmentVariable("GLM_OCR_NO_RESIZE") == "1") return raw;
         using var src = new Mat();
         CvInvoke.Imdecode(raw, ImreadModes.ColorBgr, src);
-        if (src.Height <= MaxGlmOcrHeight) return raw;
+
+        // For EXIF=6/8 the image will be rotated 90° by Ollama — effective height is the raw width.
+        // IM(3): raw 1200×1600 (EXIF=8) → effectiveHeight=1200 < 1344 → return raw unchanged.
+        // Returning raw preserves the EXIF tag so Ollama can orient the image correctly at full size.
+        int orientation = ReadJpegExifOrientation(raw);
+        int effectiveHeight = (orientation == 6 || orientation == 8) ? src.Width : src.Height;
+        if (effectiveHeight <= MaxGlmOcrHeight) return raw;
 
         double scale   = (double)MaxGlmOcrHeight / src.Height;
         var    newSize = new System.Drawing.Size((int)(src.Width * scale), MaxGlmOcrHeight);
@@ -176,6 +188,53 @@ public class GlmOcrCalendarService : ICalendarParseService
         CvInvoke.Imencode(".jpg", resized, output);
         return output.ToArray();
     }
+
+    // Minimal JPEG EXIF orientation reader. Returns 1 (normal) if absent or unreadable.
+    private static int ReadJpegExifOrientation(byte[] data)
+    {
+        if (data.Length < 12 || data[0] != 0xFF || data[1] != 0xD8) return 1;
+
+        int pos = 2;
+        while (pos + 4 <= data.Length)
+        {
+            if (data[pos] != 0xFF) break;
+            byte marker = data[pos + 1];
+            int segLen = (data[pos + 2] << 8) | data[pos + 3];
+
+            if (marker == 0xE1 && segLen > 6 && pos + 10 <= data.Length &&
+                data[pos + 4] == 'E' && data[pos + 5] == 'x' && data[pos + 6] == 'i' &&
+                data[pos + 7] == 'f' && data[pos + 8] == 0   && data[pos + 9] == 0)
+            {
+                int tiff = pos + 10;
+                if (tiff + 8 > data.Length) break;
+                bool le = data[tiff] == 'I';
+
+                int ifd0Offset = ExifInt32(data, tiff + 4, le);
+                int ifd0 = tiff + ifd0Offset;
+                if (ifd0 + 2 > data.Length) break;
+                int count = ExifUInt16(data, ifd0, le);
+
+                for (int i = 0; i < count; i++)
+                {
+                    int ep = ifd0 + 2 + i * 12;
+                    if (ep + 12 > data.Length) break;
+                    if (ExifUInt16(data, ep, le) == 0x0112)
+                        return ExifUInt16(data, ep + 8, le);
+                }
+            }
+
+            if (marker == 0xD9 || marker == 0xDA) break;
+            pos += 2 + segLen;
+        }
+        return 1;
+    }
+
+    private static int ExifUInt16(byte[] d, int o, bool le) =>
+        le ? (d[o] | (d[o + 1] << 8)) : ((d[o] << 8) | d[o + 1]);
+
+    private static int ExifInt32(byte[] d, int o, bool le) =>
+        le ? (d[o] | (d[o + 1] << 8) | (d[o + 2] << 16) | (d[o + 3] << 24))
+           : ((d[o] << 24) | (d[o + 1] << 16) | (d[o + 2] << 8) | d[o + 3]);
 
     // ── HTML table parser ─────────────────────────────────────────────────────
 
@@ -398,6 +457,116 @@ public class GlmOcrCalendarService : ICalendarParseService
 
         // Discard hours numbers (e.g. "8", "4.5") and other noise
         return "";
+    }
+
+    // ── X-mark cross-reference (App SDK TextRecognizer) ─────────────────────
+
+    /// <summary>
+    /// Scans the image with the injected OCR service to locate standalone "x" or "xx" marks.
+    /// For any GLM-OCR time-range that has an x-mark token nearby, overrides the shift to "x".
+    /// This targets hand-drawn x-marks on printed calendars that GLM-OCR misreads as time ranges.
+    /// </summary>
+    private async Task CrossReferenceXMarksAsync(
+        HtmlParseResult result, byte[] imageBytes, CancellationToken ct)
+    {
+        List<OcrElement> elements;
+        try
+        {
+            elements = await _ocrService!.RecognizeAsync(imageBytes, ct);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[x-ref] OCR failed: {ex.Message}");
+            return;
+        }
+        if (elements.Count == 0) return;
+
+        // ── 1. Approximate image width to identify the name column ─────────────────
+        using var mat = new Emgu.CV.Mat();
+        Emgu.CV.CvInvoke.Imdecode(imageBytes, Emgu.CV.CvEnum.ImreadModes.Grayscale, mat);
+        float imgWidth = mat.Width > 0 ? mat.Width : elements.Max(e => e.Bounds.X + e.Bounds.Width);
+
+        // Name column occupies the leftmost 18% of the image
+        float nameColBoundary = imgWidth * 0.18f;
+
+        // ── 2. Build ISO date → column x-center dictionary ────────────────────────
+        var dateColX = new Dictionary<string, float>();
+        foreach (var el in elements)
+        {
+            if (!DateCellRegex.IsMatch(el.Text)) continue;
+            if (!TryParseMDY(el.Text, out DateOnly d)) continue;
+            string iso = d.ToString("yyyy-MM-dd");
+            if (!dateColX.ContainsKey(iso))
+                dateColX[iso] = el.Bounds.CenterX;
+        }
+        if (dateColX.Count < 2) return; // need at least 2 column anchors
+
+        // ── 3. Build employee name → row y-center dictionary ──────────────────────
+        var nameRowY = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
+        var employeeNames = result.Employees
+            .Select(e => e.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var el in elements)
+        {
+            if (el.Bounds.X > nameColBoundary) continue;
+            foreach (var empName in employeeNames)
+            {
+                if (empName.Contains(el.Text, StringComparison.OrdinalIgnoreCase) ||
+                    el.Text.Contains(empName, StringComparison.OrdinalIgnoreCase))
+                {
+                    nameRowY.TryAdd(empName, el.Bounds.CenterY);
+                    break;
+                }
+            }
+        }
+        if (nameRowY.Count == 0) return;
+
+        // ── 4. Collect x-mark candidates ──────────────────────────────────────────
+        var xMarks = elements
+            .Where(el => el.Text.Equals("x",  StringComparison.OrdinalIgnoreCase) ||
+                         el.Text.Equals("xx", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (xMarks.Count == 0) return;
+
+        // ── 5. Estimate column width and row height from median gaps ───────────────
+        float colWidth  = EstimateMedianGap(dateColX.Values.OrderBy(v => v).ToList());
+        float rowHeight = EstimateMedianGap(nameRowY.Values.OrderBy(v => v).ToList());
+        if (colWidth < 1 || rowHeight < 1) return;
+
+        // ── 6. Override time-ranges that have a nearby x-mark token ───────────────
+        float tolX = colWidth  * 0.60f;
+        float tolY = rowHeight * 0.60f;
+
+        foreach (var emp in result.Employees)
+        {
+            if (!nameRowY.TryGetValue(emp.Name, out float empY)) continue;
+            for (int i = 0; i < emp.Shifts.Count; i++)
+            {
+                var shift = emp.Shifts[i];
+                if (!TimeRangeRegex.IsMatch(shift.Shift)) continue;
+                if (!dateColX.TryGetValue(shift.Date, out float dateX)) continue;
+
+                bool hasXMark = xMarks.Any(x =>
+                    Math.Abs(x.Bounds.CenterX - dateX) < tolX &&
+                    Math.Abs(x.Bounds.CenterY - empY)  < tolY);
+
+                if (hasXMark)
+                {
+                    Console.WriteLine($"[x-ref] {emp.Name} {shift.Date}: {shift.Shift} → x");
+                    emp.Shifts[i] = shift with { Shift = "x" };
+                }
+            }
+        }
+    }
+
+    private static float EstimateMedianGap(List<float> sortedValues)
+    {
+        if (sortedValues.Count < 2) return 0;
+        var gaps = new List<float>(sortedValues.Count - 1);
+        for (int i = 1; i < sortedValues.Count; i++)
+            gaps.Add(sortedValues[i] - sortedValues[i - 1]);
+        gaps.Sort();
+        return gaps[gaps.Count / 2];
     }
 
     // ── Data types ────────────────────────────────────────────────────────────

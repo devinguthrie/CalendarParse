@@ -3,7 +3,7 @@
 > **Forward-looking only. No session summaries here.**
 > After every session: create `memory/sessions/session-N.md`, append to `experiments.jsonl`, update `memory/state.md` in-place. Do NOT add narrative here.
 
-_Last updated: session 43_
+_Last updated: session 57_
 
 ---
 
@@ -15,7 +15,7 @@ _Last updated: session 43_
 | [`memory/anti-patterns.md`](memory/anti-patterns.md) | All known anti-patterns (append-only) |
 | [`memory/rejected-models.md`](memory/rejected-models.md) | Rejected model evaluations (append-only) |
 | [`memory/key-lessons.md`](memory/key-lessons.md) | Architectural lessons and what-works / what-never-works |
-| [`memory/sessions/`](memory/sessions/) | Per-session narratives (session-22 through session-43, plus phase-archive.md) |
+| [`memory/sessions/`](memory/sessions/) | Per-session narratives (`session-N.md`) plus `phase-archive.md` |
 | [`../../experiments.jsonl`](../../experiments.jsonl) | All experiment records, append-only JSONL |
 
 ---
@@ -23,13 +23,13 @@ _Last updated: session 43_
 ## Quick Reference Commands
 
 ```powershell
-# GLM-OCR (best: 408/434 = 94.0%)
+# GLM-OCR (best: 429/434 = 98.8%)
 dotnet run --project CalendarParse.Cli --no-build -- "CalendarParse\calander-parse-test-imgs" --glm-ocr --test --model glm-ocr 2>&1 | Tee-Object glm-ocr-benchmark.txt
 
 # GLM-OCR score only
 dotnet run --project CalendarParse.Cli --no-build -- "CalendarParse\calander-parse-test-imgs" --glm-ocr --test --model glm-ocr 2>&1 | Select-String "Overall|IM \("
 
-# Hybrid pipeline (qwen2.5vl:7b, parity regression 267/434 as of session 43)
+# Hybrid pipeline (see `memory/state.md` for latest parity status)
 dotnet run --project CalendarParse.Cli --no-build -- "CalendarParse\calander-parse-test-imgs" --test --model qwen2.5vl:7b 2>&1 | Tee-Object hybrid-run-output.txt
 
 # Single image (faster iteration)
@@ -40,33 +40,16 @@ dotnet run --project CalendarParse.Cli --no-build -- "CalendarParse\calander-par
 
 ## Next Steps (Priority Order)
 
-> **Focus**: 18 of 26 remaining errors (see `memory/state.md`) are IM(3) portrait cell-alignment.
+> **Focus**: 5 real errors remain (see `memory/state.md`). IM(2) and IM(3) are now perfect. Remaining errors:
+> - 2× **HARD CEILING** — handwritten ink corrections over printed numbers (Jenny Oct26, Kyleigh Oct28 in IM1): unresolvable. True ceiling is 432/434 (99.5%)
+> - 2× x/shift confusion (Sarah Oct29 IM1, Brittney Jul31 IM4) — model reads shift time where "x" is printed
+> - 1× x/RTO confusion (Kyleigh Jul25 IM5) — model outputs "x" instead of "RTO"
+> - 1× Ciara/Clara name phantom (IM2, 7 EXTRA entries, not counted against score)
 
-### Tier 1 — Near-zero effort, could be free points
-
-1. **Upgrade Ollama + check [#14474](https://github.com/ollama/ollama/issues/14474)** — GLM-OCR empty-markdown regression (Ollama 0.17.1–0.17.4) was fixed and merged April 11, 2026. Run `ollama --version`, check issue status.
-
-2. ~~**Ollama #14114 portrait modelfile workaround**~~ — TESTED. `num_ctx 10240` + full 1600px on IM(3) = 66/84 (identical). Portrait errors are intrinsic to GLM-OCR tiling on portrait aspect ratios.
-
-### Tier 2 — Model swap (Ollama-native, no new infrastructure)
-
-3. ~~IBM Granite 4.0~~ — SKIPPED: text-only on Ollama, no GGUF/Ollama vision release.
-4. ~~InternVL3~~ — SKIPPED: community builds are text-only or hallucinate fake names.
-5. ~~Qwen3-VL~~ — SKIPPED: thinking block burns all tokens; unusable (see `memory/rejected-models.md`).
-
-### Tier 3 — Python sidecar (new infra, potentially high reward)
-
-6. ~~glmocr cloud API~~ — MOOT: session 38 A confirmed full-res (1600px) = 66/84. Tiling problem is architecture-level, not a resize artifact. Also: data leaves machine via Z.ai.
-7. ~~Surya portrait cell pre-pass~~ — TESTED session 38 F. Row/col artifacts; not viable as primary parser. Keep only for diagnostic geometry work.
-
-### Tier 4 — Targeted mark detection (Windows-only, low risk)
-
-8. **Windows App SDK TextRecognizer for xx/mark detection** — `TextRecognizer.RecognizeWordsAsync()` returns polygon bounding boxes + confidence. Targets 2–3 remaining xx/mark errors. See [Microsoft Learn — Text Recognition](https://learn.microsoft.com/en-us/windows/ai/apis/text-recognition).
 
 ### Housekeeping
 
-9. **Hybrid parity recovery (session 41)**: hybrid dropped to 265/434 after service extraction. Investigate prompt/resource loading and runtime-path parity in `CalendarParse.Parsing`. Restore to ~394/434 before any further heuristic tuning.
-10. **Ollama #14171 revert (future)**: when M-RoPE assertion is fixed, remove `ResizeForGlmOcrIfNeeded` + `keep_alive=0` + `num_predict=20000` constraints and test full-resolution portrait.
+10. **Ollama #14171 revert (future)**: when M-RoPE assertion is fixed, remove `keep_alive=0` + `num_predict=20000` constraints. Note: `ResizeForGlmOcrIfNeeded` now has EXIF-aware logic (session 56) and must be retained even after bug fix.
 
 ---
 

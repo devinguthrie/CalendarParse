@@ -8,6 +8,12 @@
     <ScrollView>
         <VerticalStackLayout Padding="24" Spacing="16">
 
+            <!-- Account -->
+            <Label Text="Account" FontAttributes="Bold" />
+            <Label x:Name="AccountEmailLabel" TextColor="Gray" />
+            <Button x:Name="SignOutBtn" Text="Sign Out" Clicked="OnSignOutClicked" />
+            <BoxView HeightRequest="1" Color="Gray" Opacity="0.3" Margin="0,8" />
+
             <!-- Employee Name -->
             <Label Text="Your Name (as it appears on the schedule)" FontAttributes="Bold" />
             <Entry x:Name="NameEntry"

@@ -14,7 +14,7 @@ If reverted, still perform all steps with `outcome: reverted`. Do not wait until
 
 ## Quick Reference
 
-- **Current best**: 408/434 (94.0%) — `glm-ocr` via Ollama, `--glm-ocr` flag, temp=0
+- **Current best**: 429/434 (98.8%) — `glm-ocr` via Ollama, `--glm-ocr` flag, temp=0
 - **Anti-patterns**: `.github/docs/memory/anti-patterns.md`
 - **Rejected models**: `.github/docs/memory/rejected-models.md`
 - **Remaining errors**: `.github/docs/memory/state.md`
@@ -24,13 +24,13 @@ If reverted, still perform all steps with `outcome: reverted`. Do not wait until
 ## Benchmark Commands
 
 ```powershell
-# GLM-OCR full benchmark (best: 408/434 = 94.0%)
+# GLM-OCR full benchmark (best: 429/434 = 98.8%)
 dotnet run --project CalendarParse.Cli --no-build -- "CalendarParse\calander-parse-test-imgs" --glm-ocr --test --model glm-ocr 2>&1 | Tee-Object benchmark-output.txt
 
 # Score summary only
 dotnet run --project CalendarParse.Cli --no-build -- "CalendarParse\calander-parse-test-imgs" --glm-ocr --test --model glm-ocr 2>&1 | Select-String "Overall|IM \("
 
-# Hybrid pipeline (parity regression: 267/434 as of session 43)
+# Hybrid pipeline (see .github/docs/memory/state.md for latest parity status)
 dotnet run --project CalendarParse.Cli --no-build -- "CalendarParse\calander-parse-test-imgs" --test --model qwen2.5vl:7b 2>&1 | Tee-Object hybrid-output.txt
 ```
 

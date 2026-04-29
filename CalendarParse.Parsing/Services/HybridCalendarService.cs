@@ -1394,6 +1394,9 @@ public sealed class HybridCalendarService : ICalendarParseService
                     v = v.Trim();
                     v = TrailingHours.Replace(v, "").Trim();
                     if (Regex.IsMatch(v, @"^\d+\.?\d*$")) { rawNumericCount++; v = ""; }
+                    // Reject ISO-date contamination (e.g. "2025-12-26") — the model sometimes
+                    // echoes the column date as a shift value instead of the actual schedule entry.
+                    else if (Regex.IsMatch(v, @"^\d{4}-\d{2}-\d{2}$")) { v = ""; }
                 }
                 result.Add(v);
             }

@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks>net10.0;net10.0-windows10.0.19041.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>CalendarParse.Parsing</RootNamespace>
@@ -25,6 +25,12 @@
     <PackageReference Include="Emgu.CV" Version="4.12.0.5764" />
     <PackageReference Include="Emgu.CV.runtime.windows" Version="4.12.0.5764" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
     <PackageReference Include="Tesseract" Version="5.2.0" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">
+    <!-- ExcludeAssets="buildTransitive" prevents the WindowsAppSDK .targets from propagating
+         to consuming projects (CalendarParse.Tests) that aren't packaged Windows apps. -->
+    <PackageReference Include="Microsoft.WindowsAppSDK.AI" Version="1.8.53" ExcludeAssets="buildTransitive" />
   </ItemGroup>
 
 </Project>

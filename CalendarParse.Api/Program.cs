@@ -1,10 +1,14 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Security.Claims;
 using CalendarParse.Api;
+using CalendarParse.Auth;
 using CalendarParse.Api.Data;
 using CalendarParse.Parsing.Services;
 using CalendarParse.Models;
 using CalendarParse.Services;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Sentry;
 
@@ -23,6 +27,10 @@ var debugMode     = builder.Configuration.GetValue<bool>("CalendarParse:DebugMod
 
 // ── Shared secret ─────────────────────────────────────────────────────────────
 var apiKey = EnsureApiKey(builder, port);
+
+// ── Auth0 config ──────────────────────────────────────────────────────────────
+var auth0Domain   = builder.Configuration["Auth0:Domain"]   ?? string.Empty;
+var auth0Audience = builder.Configuration["Auth0:Audience"] ?? string.Empty;
 
 // ── Services ──────────────────────────────────────────────────────────────────
 builder.Services.AddHttpClient();
@@ -48,6 +56,32 @@ Directory.CreateDirectory(imageDir);
 
 builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 
+// ── Authentication: JWT Bearer (mobile) + API key (CLI) ───────────────────────
+builder.Services
+    .AddAuthentication(options =>
+    {
+        options.DefaultAuthenticateScheme = "DualAuth";
+        options.DefaultChallengeScheme    = "DualAuth";
+    })
+    .AddPolicyScheme("DualAuth", "JWT or API Key", options =>
+    {
+        options.ForwardDefaultSelector = ctx =>
+            ctx.Request.Headers.ContainsKey("Authorization")
+                ? JwtBearerDefaults.AuthenticationScheme
+                : ApiKeyAuthenticationHandler.SchemeName;
+    })
+    .AddJwtBearer(options =>
+    {
+        options.Authority        = $"https://{auth0Domain}/";
+        options.Audience         = auth0Audience;
+        options.MapInboundClaims = false; // keep standard claim names (sub, email, name)
+    })
+    .AddScheme<ApiKeyOptions, ApiKeyAuthenticationHandler>(
+        ApiKeyAuthenticationHandler.SchemeName,
+        opts => opts.ApiKey = apiKey);
+
+builder.Services.AddAuthorization();
+
 var app = builder.Build();
 
 if (debugMode)
@@ -58,29 +92,19 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<JobDbContext>();
     await db.Database.EnsureCreatedAsync();
+    // Add UserId for existing deployments — EnsureCreated won't add new columns.
+    // Check via PRAGMA first so ALTER TABLE is only executed when the column is absent,
+    // avoiding the EF Core fail-level log that fires before the catch block.
+    var userIdExists = await db.Database
+        .SqlQuery<int>($"SELECT COUNT(*) AS Value FROM pragma_table_info('Jobs') WHERE name='UserId'")
+        .SingleAsync();
+    if (userIdExists == 0)
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE Jobs ADD COLUMN UserId TEXT");
 }
 
-// ── Auth middleware (skip /health) ────────────────────────────────────────────
-app.Use(async (context, next) =>
-{
-    if (context.Request.Path.StartsWithSegments("/health") ||
-        context.Request.Path.StartsWithSegments("/auth") ||
-        context.Request.Path.StartsWithSegments("/sentry-test"))
-    {
-        await next(context);
-        return;
-    }
-
-    if (!context.Request.Headers.TryGetValue("X-CalendarParse-Key", out var incoming)
-        || incoming.ToString() != apiKey)
-    {
-        context.Response.StatusCode = 401;
-        await context.Response.WriteAsJsonAsync(new { error = "Invalid or missing API key." });
-        return;
-    }
-
-    await next(context);
-});
+// ── Auth middleware ────────────────────────────────────────────────────────────
+app.UseAuthentication();
+app.UseAuthorization();
 
 // ── Endpoints ─────────────────────────────────────────────────────────────────
 
@@ -110,7 +134,7 @@ app.MapGet("/health", async (IHttpClientFactory httpClientFactory) =>
 });
 
 // POST /submit — accepts image bytes, immediately returns a job ID, processes asynchronously
-app.MapPost("/submit", async (SubmitRequest request, JobDbContext db, IServiceProvider services) =>
+app.MapPost("/submit", async (SubmitRequest request, JobDbContext db, IServiceProvider services, ClaimsPrincipal user) =>
 {
     if (string.IsNullOrWhiteSpace(request.EmployeeName))
         return Results.BadRequest(new { error = "employeeName is required." });
@@ -126,9 +150,14 @@ app.MapPost("/submit", async (SubmitRequest request, JobDbContext db, IServicePr
     }
 
     // Save image to disk
+    // JWT users must have a 'sub' claim; reject if missing to prevent unscoped job creation
+    if (!OwnershipPolicy.IsApiKeyUser(user) && user.FindFirst("sub") is null)
+        return Results.Unauthorized();
+
     var job = new Job
     {
         EmployeeName = request.EmployeeName,
+        UserId       = OwnershipPolicy.GetUserId(user),
     };
     job.ImagePath = Path.Combine(imageDir, $"{job.Id}.jpg");
     await File.WriteAllBytesAsync(job.ImagePath, imageBytes);
@@ -140,28 +169,34 @@ app.MapPost("/submit", async (SubmitRequest request, JobDbContext db, IServicePr
     _ = ProcessJobAsync(job.Id, services, ollamaBaseUrl, ollamaModel, imageDir, db, debugMode);
 
     return Results.Ok(new SubmitResponse { JobId = job.Id });
-});
+}).RequireAuthorization();
 
 // GET /jobs/{id}/status — poll job status
-app.MapGet("/jobs/{id}/status", async (string id, JobDbContext db) =>
+app.MapGet("/jobs/{id}/status", async (string id, JobDbContext db, ClaimsPrincipal user) =>
 {
     var job = await db.Jobs.FindAsync(id);
     if (job is null)
         return Results.NotFound(new { error = "Job not found." });
+
+    if (!OwnershipPolicy.CanAccess(user, job.UserId))
+        return Results.Forbid();
 
     return Results.Ok(new JobStatusResponse
     {
         Status = job.Status.ToString().ToLowerInvariant(),
         Error  = job.Error,
     });
-});
+}).RequireAuthorization();
 
 // GET /jobs/{id}/result — fetch result when done
-app.MapGet("/jobs/{id}/result", async (string id, JobDbContext db) =>
+app.MapGet("/jobs/{id}/result", async (string id, JobDbContext db, ClaimsPrincipal user) =>
 {
     var job = await db.Jobs.FindAsync(id);
     if (job is null)
         return Results.NotFound(new { error = "Job not found." });
+
+    if (!OwnershipPolicy.CanAccess(user, job.UserId))
+        return Results.Forbid();
 
     if (job.Status != JobStatus.Done)
         return Results.Json(
@@ -174,7 +209,7 @@ app.MapGet("/jobs/{id}/result", async (string id, JobDbContext db) =>
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
     return Results.Ok(result ?? new JobResultResponse());
-});
+}).RequireAuthorization();
 
 // POST /process — legacy synchronous endpoint (kept for backward compat / CLI use)
 app.MapPost("/process", async (ProcessRequest request, HybridCalendarService hybrid) =>
@@ -214,10 +249,10 @@ app.MapPost("/process", async (ProcessRequest request, HybridCalendarService hyb
         ImageWidth  = result.ImageWidth,
         ImageHeight = result.ImageHeight,
     });
-});
+}).RequireAuthorization();
 
 // POST /confirm — stores employee-corrected shifts for future accuracy improvement
-app.MapPost("/confirm", async (ConfirmRequest request, JobDbContext db, ILogger<Program> logger) =>
+app.MapPost("/confirm", async (ConfirmRequest request, JobDbContext db, ILogger<Program> logger, ClaimsPrincipal user) =>
 {
     logger.LogInformation(
         "Received {Count} confirmed shift(s). jobId={JobId}",
@@ -227,6 +262,10 @@ app.MapPost("/confirm", async (ConfirmRequest request, JobDbContext db, ILogger<
     Job? sourceJob = null;
     if (!string.IsNullOrWhiteSpace(request.JobId))
         sourceJob = await db.Jobs.FindAsync(request.JobId);
+
+    // JWT users can only confirm their own jobs
+    if (sourceJob is not null && !OwnershipPolicy.CanAccess(user, sourceJob.UserId))
+        return Results.Forbid();
 
     var correction = new ConfirmedCorrection
     {
@@ -241,11 +280,7 @@ app.MapPost("/confirm", async (ConfirmRequest request, JobDbContext db, ILogger<
     await db.SaveChangesAsync();
 
     return Results.Ok(new { ok = true, correctionId = correction.Id });
-});
-
-// ── Auth scaffolding (stubs — will be wired up when auth is implemented) ──────
-app.MapPost("/auth/register", () => Results.StatusCode(501)).AllowAnonymous();
-app.MapPost("/auth/login",    () => Results.StatusCode(501)).AllowAnonymous();
+}).RequireAuthorization();
 
 app.Run();
 

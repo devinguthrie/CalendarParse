@@ -153,7 +153,12 @@ if (visionMode)
 else if (glmOcrMode)
 {
     string glmModel = string.IsNullOrEmpty(ollamaModel) ? GlmOcrCalendarService.DefaultModel : ollamaModel;
-    parser = new GlmOcrCalendarService(model: glmModel);
+#if WINDOWS
+    IOcrService? glmOcrAppSdk = new WindowsAppSdkTextRecognizerService();
+#else
+    IOcrService? glmOcrAppSdk = null;
+#endif
+    parser = new GlmOcrCalendarService(model: glmModel, ocrService: glmOcrAppSdk);
     Console.WriteLine($"Mode: GLM-OCR ({glmModel} via Ollama, full-table markdown)");
 }
 else

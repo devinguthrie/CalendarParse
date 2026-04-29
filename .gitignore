@@ -109,6 +109,9 @@ BenchmarkResults/device-captures/*
 .vscode/*
 !.vscode/mcp.json
 
+# VS Code SQL Tools session files (local query history)
+*.session.sql
+
 # App settings
 appsettings.json
 appsettings.Development.json
