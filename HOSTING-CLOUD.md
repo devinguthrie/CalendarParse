@@ -36,53 +36,54 @@ Cloudflare DNS → Cloud API host
 
 ---
 
-## Required Code Changes
+## Deployment Configuration
 
-### 1. Fix API key persistence 🚨
-`EnsureApiKey()` writes key to `appsettings.json`. On any cloud redeploy this file is
-wiped → new key generated → mobile app breaks.
+No code changes are needed to run in the cloud. Switch environments entirely via env vars.
 
-**Fix in `CalendarParse.Api/Program.cs`** (~line 422):
-```csharp
-// Before generating a new key, check env var override:
-var envKey = builder.Configuration["CalendarParse:ApiKey"];
-if (!string.IsNullOrWhiteSpace(envKey))
-    return envKey;   // use injected key, skip file write
-// ... existing auto-generate logic below
+### Set environment variables on the host
+
+All runtime config uses ASP.NET Core's double-underscore env var format.
+
+```
+# Required — stable key so mobile app doesn't break on redeploy.
+# Copy the value from your local appsettings.json (first-run output).
+CalendarParse__ApiKey=<your-stable-key>
+
+# Point at RunPod Serverless worker instead of local Ollama
+CalendarParse__OllamaBaseUrl=<runpod-worker-url>
+CalendarParse__OllamaModel=glm-ocr
+
+# Persistent volume mount path — set this to wherever you mount persistent storage
+# Fly.io: /data   Azure Files: wherever you mount the share
+CalendarParse__DataDir=/data
 ```
 
-Set env var on the host:
-```
-CALENDARPARSE__CalendarParse__ApiKey=<your-stable-key>
-```
+**Local defaults (nothing to set for local dev):**
 
-### 2. Swap service registration in Program.cs
-Currently `HybridCalendarService` is registered. Change to `GlmOcrCalendarService`.
+| Env var | Local default |
+|---|---|
+| `CalendarParse__OllamaBaseUrl` | `http://localhost:11434` |
+| `CalendarParse__OllamaModel` | `qwen2.5vl:7b` |
+| `CalendarParse__DataDir` | `%LOCALAPPDATA%\CalendarParse` |
+| `CalendarParse__ApiKey` | auto-generated on first run, saved to `appsettings.json` |
+| `CalendarParse__Port` | `5150` |
 
-In `Program.cs` (~line 39-40):
-```csharp
-// BEFORE:
-builder.Services.AddScoped<ICalendarParseService, HybridCalendarService>();
+### Persistent storage
 
-// AFTER:
-builder.Services.AddScoped<ICalendarParseService, GlmOcrCalendarService>();
-```
+Set `CalendarParse__DataDir` to a mounted persistent volume path:
+- **Fly.io**: 1GB persistent volume (free) → mount at `/data`, set `CalendarParse__DataDir=/data`
+- **Azure App Service**: Azure Files share mount → set `CalendarParse__DataDir=/mount/calendarparse`
 
-Also update default model in `appsettings.json`:
-```json
-"OllamaModel": "glm-ocr"
-```
+SQLite (`jobs.db`) and uploaded images are stored under this directory.
 
-And set `OllamaBaseUrl` to point at the RunPod worker URL via env var.
-
-### 3. Linux only (2A): Add Emgu.CV Linux runtime package
+### Linux only (2A): Add Emgu.CV Linux runtime package
 In `CalendarParse.Parsing/CalendarParse.Parsing.csproj`:
 ```xml
 <PackageReference Include="Emgu.CV.runtime.linux-x64" Version="4.12.0.5764"
   Condition="$([MSBuild]::IsOSPlatform('Linux'))" />
 ```
 
-### 4. Linux only (2A): Dockerfile
+### Linux only (2A): Dockerfile
 ```dockerfile
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
 WORKDIR /app
@@ -98,12 +99,6 @@ WORKDIR /app
 COPY --from=build /app/publish .
 ENTRYPOINT ["dotnet", "CalendarParse.Api.dll"]
 ```
-
-### 5. Persistent storage
-SQLite + uploaded images at `%LOCALAPPDATA%/CalendarParse/` — ephemeral in cloud.
-- **Fly.io**: 1GB persistent volume (free) → mount at `/root/.local/share/CalendarParse`
-- **Azure**: Azure Files share mount (~$0.06/GB/mo) or accept data loss on redeploy
-- **Or**: Migrate to Azure Blob for images + keep SQLite but accept jobs lost on redeploy
 
 ---
 
@@ -179,9 +174,8 @@ sync endpoint instead of Ollama directly — or run a lightweight proxy that map
 
 ## Deployment Steps (2B — Azure App Service)
 
-1. Make code changes above (API key fix, service swap)
-2. `az login`
-3. Create resource group + App Service plan (Windows, B1):
+1. `az login`
+2. Create resource group + App Service plan (Windows, B1):
    ```bash
    az group create --name calendarparse-rg --location eastus
    az appservice plan create --name calendarparse-plan --resource-group calendarparse-rg \
@@ -189,23 +183,24 @@ sync endpoint instead of Ollama directly — or run a lightweight proxy that map
    az webapp create --name calendarparse-api --resource-group calendarparse-rg \
      --plan calendarparse-plan --runtime "DOTNET|10.0"
    ```
-4. Set env vars:
+3. Set env vars (see [Deployment Configuration](#deployment-configuration) above):
    ```bash
    az webapp config appsettings set --name calendarparse-api \
      --resource-group calendarparse-rg \
      --settings CalendarParse__ApiKey=<stable-key> \
                CalendarParse__OllamaBaseUrl=<runpod-worker-url> \
-               CalendarParse__OllamaModel=glm-ocr
+               CalendarParse__OllamaModel=glm-ocr \
+               CalendarParse__DataDir=/mount/calendarparse
    ```
-5. Publish:
+4. Publish:
    ```powershell
    dotnet publish CalendarParse.Api -c Release
    az webapp deploy --name calendarparse-api --resource-group calendarparse-rg \
      --src-path CalendarParse.Api/bin/Release/net10.0-windows.../publish.zip
    ```
-6. Set up Cloudflare DNS → Azure App Service custom domain
-7. Build + deploy RunPod worker
-8. Update mobile app server URL
+5. Set up Cloudflare DNS → Azure App Service custom domain
+6. Build + deploy RunPod worker
+7. Update mobile app server URL
 
 ---
 

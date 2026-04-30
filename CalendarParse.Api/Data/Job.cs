@@ -7,7 +7,8 @@ public enum JobStatus { Submitted, Processing, Done, Error }
 ///
 /// State machine:
 ///   Submitted ──► Processing ──► Done
-///                            ↘── Error
+///         ▲                  ↘── Error (transient: re-queued with NextRetryAt)
+///         └──── retry (up to MaxRetries) ──────────┘
 /// </summary>
 public class Job
 {
@@ -23,7 +24,7 @@ public class Job
     /// <summary>Auth0 'sub' claim of the user who submitted this job. Null for CLI-submitted jobs.</summary>
     public string?   UserId       { get; set; }
 
-    /// <summary>JSON result (ProcessResponse) — populated when Status == Done.</summary>
+    /// <summary>JSON result (JobResultResponse) — populated when Status == Done.</summary>
     public string?   ResultJson   { get; set; }
 
     /// <summary>Error message — populated when Status == Error.</summary>
@@ -31,4 +32,10 @@ public class Job
 
     public DateTime  SubmittedAt  { get; set; } = DateTime.UtcNow;
     public DateTime? CompletedAt  { get; set; }
+
+    /// <summary>Number of times this job has been retried after a transient failure.</summary>
+    public int       RetryCount   { get; set; } = 0;
+
+    /// <summary>When set, BackgroundJobProcessor skips this job until the time elapses (exponential backoff).</summary>
+    public DateTime? NextRetryAt  { get; set; }
 }

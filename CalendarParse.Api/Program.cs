@@ -1,14 +1,17 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Security.Claims;
+using System.Threading.RateLimiting;
 using CalendarParse.Api;
-using CalendarParse.Auth;
 using CalendarParse.Api.Data;
-using CalendarParse.Parsing.Services;
+using CalendarParse.Api.Services;
+using CalendarParse.Auth;
 using CalendarParse.Models;
-using CalendarParse.Services;
+using CalendarParse.Parsing.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Sentry;
 
@@ -35,20 +38,28 @@ var auth0Audience = builder.Configuration["Auth0:Audience"] ?? string.Empty;
 // ── Services ──────────────────────────────────────────────────────────────────
 builder.Services.AddHttpClient();
 
-// Transient: each request gets a fresh HybridCalendarService instance.
-builder.Services.AddTransient<HybridCalendarService>(_ =>
-    new HybridCalendarService(baseUrl: ollamaBaseUrl, model: ollamaModel));
+// Transient: each request gets a fresh GlmOcrCalendarService instance.
+// Note: GlmOcrCalendarService.Http is a static HttpClient — creating new instances is safe.
+// GLM-OCR (98.8% accuracy) does NOT populate ImageWidth/Height or EstimatedBounds.
+// The overlay feature in the mobile app is Hybrid-pipeline only; GLM-OCR returns 0,0.
+builder.Services.AddTransient<GlmOcrCalendarService>(_ =>
+    new GlmOcrCalendarService(baseUrl: ollamaBaseUrl, model: ollamaModel));
 
-// Job database (SQLite, stored in %LOCALAPPDATA%/CalendarParse/)
-var jobDbDir  = Path.Combine(
-    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-    "CalendarParse");
+// Data directory — override CalendarParse:DataDir (env: CalendarParse__DataDir) for
+// cloud/container deployments where %LOCALAPPDATA% may be ephemeral or non-standard.
+// Local default: %LOCALAPPDATA%/CalendarParse  (e.g. C:\Users\<you>\AppData\Local\CalendarParse)
+// Cloud example: /data  (mount a persistent volume here on Fly.io / Azure Files)
+var configuredDataDir = builder.Configuration["CalendarParse:DataDir"];
+var jobDbDir = !string.IsNullOrWhiteSpace(configuredDataDir)
+    ? configuredDataDir
+    : Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "CalendarParse");
 Directory.CreateDirectory(jobDbDir);
 
 var jobDbPath = Path.Combine(jobDbDir, "jobs.db");
-builder.Services.AddDbContext<JobDbContext>(opts =>
-    opts.UseSqlite($"Data Source={jobDbPath}"),
-    ServiceLifetime.Singleton);
+builder.Services.AddDbContextFactory<JobDbContext>(opts =>
+    opts.UseSqlite($"Data Source={jobDbPath}"));
 
 // Image storage directory
 var imageDir = Path.Combine(jobDbDir, "images");
@@ -82,6 +93,34 @@ builder.Services
 
 builder.Services.AddAuthorization();
 
+// Per-IP rate limiting: 10 submit requests per minute.
+// UseForwardedHeaders (added below) must run first so the real client IP from
+// X-Forwarded-For (set by Cloudflare Tunnel) is visible here.
+builder.Services.AddRateLimiter(options =>
+{
+    options.AddPolicy("submit", ctx =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit          = 10,
+                Window               = TimeSpan.FromMinutes(1),
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                QueueLimit           = 0,
+            }));
+    options.RejectionStatusCode = 429;
+});
+
+// Background job processor: polls for Submitted jobs and runs them via GLM-OCR.
+// Handles retries with exponential backoff for transient Ollama failures.
+builder.Services.AddHostedService(sp =>
+    new BackgroundJobProcessor(
+        sp.GetRequiredService<IDbContextFactory<JobDbContext>>(),
+        ollamaBaseUrl,
+        ollamaModel,
+        debugMode,
+        sp.GetRequiredService<ILogger<BackgroundJobProcessor>>()));
+
 var app = builder.Build();
 
 if (debugMode)
@@ -100,7 +139,28 @@ using (var scope = app.Services.CreateScope())
         .SingleAsync();
     if (userIdExists == 0)
         await db.Database.ExecuteSqlRawAsync("ALTER TABLE Jobs ADD COLUMN UserId TEXT");
+
+    var retryCountExists = await db.Database
+        .SqlQuery<int>($"SELECT COUNT(*) AS Value FROM pragma_table_info('Jobs') WHERE name='RetryCount'")
+        .SingleAsync();
+    if (retryCountExists == 0)
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE Jobs ADD COLUMN RetryCount INTEGER NOT NULL DEFAULT 0");
+
+    var nextRetryAtExists = await db.Database
+        .SqlQuery<int>($"SELECT COUNT(*) AS Value FROM pragma_table_info('Jobs') WHERE name='NextRetryAt'")
+        .SingleAsync();
+    if (nextRetryAtExists == 0)
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE Jobs ADD COLUMN NextRetryAt TEXT");
 }
+
+// ── Middleware ────────────────────────────────────────────────────────────────
+// ForwardedHeaders must come before RateLimiter and Authentication so that the real
+// client IP from X-Forwarded-For (set by Cloudflare) is used for rate limiting and logging.
+app.UseForwardedHeaders(new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
+});
+app.UseRateLimiter();
 
 // ── Auth middleware ────────────────────────────────────────────────────────────
 app.UseAuthentication();
@@ -134,10 +194,16 @@ app.MapGet("/health", async (IHttpClientFactory httpClientFactory) =>
 });
 
 // POST /submit — accepts image bytes, immediately returns a job ID, processes asynchronously
-app.MapPost("/submit", async (SubmitRequest request, JobDbContext db, IServiceProvider services, ClaimsPrincipal user) =>
+app.MapPost("/submit", async (SubmitRequest request, JobDbContext db, ClaimsPrincipal user) =>
 {
     if (string.IsNullOrWhiteSpace(request.EmployeeName))
         return Results.BadRequest(new { error = "employeeName is required." });
+
+    // Pre-check base64 length to avoid large allocations from malicious payloads.
+    // Base64 overhead ≈ 4/3; 20 MiB image → ~28 MiB base64 string.
+    const int MaxImageBytes = 20 * 1024 * 1024;
+    if (request.ImageBase64.Length > MaxImageBytes * 4 / 3 + 16)
+        return Results.Json(new { error = "Image exceeds 20 MB limit." }, statusCode: 413);
 
     byte[] imageBytes;
     try
@@ -149,7 +215,9 @@ app.MapPost("/submit", async (SubmitRequest request, JobDbContext db, IServicePr
         return Results.BadRequest(new { error = "Invalid imageBase64 encoding." });
     }
 
-    // Save image to disk
+    if (imageBytes.Length > MaxImageBytes)
+        return Results.Json(new { error = "Image exceeds 20 MB limit." }, statusCode: 413);
+
     // JWT users must have a 'sub' claim; reject if missing to prevent unscoped job creation
     if (!OwnershipPolicy.IsApiKeyUser(user) && user.FindFirst("sub") is null)
         return Results.Unauthorized();
@@ -165,11 +233,9 @@ app.MapPost("/submit", async (SubmitRequest request, JobDbContext db, IServicePr
     db.Jobs.Add(job);
     await db.SaveChangesAsync();
 
-    // Fire-and-forget background processing
-    _ = ProcessJobAsync(job.Id, services, ollamaBaseUrl, ollamaModel, imageDir, db, debugMode);
-
+    // BackgroundJobProcessor picks this up within 5 seconds.
     return Results.Ok(new SubmitResponse { JobId = job.Id });
-}).RequireAuthorization();
+}).RequireAuthorization().RequireRateLimiting("submit");
 
 // GET /jobs/{id}/status — poll job status
 app.MapGet("/jobs/{id}/status", async (string id, JobDbContext db, ClaimsPrincipal user) =>
@@ -212,7 +278,7 @@ app.MapGet("/jobs/{id}/result", async (string id, JobDbContext db, ClaimsPrincip
 }).RequireAuthorization();
 
 // POST /process — legacy synchronous endpoint (kept for backward compat / CLI use)
-app.MapPost("/process", async (ProcessRequest request, HybridCalendarService hybrid) =>
+app.MapPost("/process", async (ProcessRequest request, GlmOcrCalendarService glm) =>
 {
     if (string.IsNullOrWhiteSpace(request.EmployeeName))
         return Results.BadRequest(new { error = "employeeName is required." });
@@ -222,6 +288,10 @@ app.MapPost("/process", async (ProcessRequest request, HybridCalendarService hyb
         await Task.Delay(TimeSpan.FromSeconds(5));
         return Results.Ok(BuildMockProcessResponse(request.EmployeeName));
     }
+
+    const int MaxImageBytes = 20 * 1024 * 1024;
+    if (request.ImageBase64.Length > MaxImageBytes * 4 / 3 + 16)
+        return Results.Json(new { error = "Image exceeds 20 MB limit." }, statusCode: 413);
 
     byte[] imageBytes;
     try
@@ -233,22 +303,20 @@ app.MapPost("/process", async (ProcessRequest request, HybridCalendarService hyb
         return Results.BadRequest(new { error = "Invalid imageBase64 encoding." });
     }
 
+    if (imageBytes.Length > MaxImageBytes)
+        return Results.Json(new { error = "Image exceeds 20 MB limit." }, statusCode: 413);
+
     using var stream = new MemoryStream(imageBytes);
-    var result = await hybrid.ProcessWithBoundsAsync(stream, request.EmployeeName);
+    var rawJson = await glm.ProcessAsync(stream, request.EmployeeName);
 
-    if (result.IsError)
-        return Results.Json(new { error = result.Error }, statusCode: 500);
+    if (rawJson.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase))
+        return Results.Json(new { error = rawJson }, statusCode: 500);
 
-    var match = EmployeeNameMatcher.Match(result.Shifts, request.EmployeeName);
-    if (TryBuildEmployeeMatchError(request.EmployeeName, result.Shifts, match) is { } filteredError)
-        return Results.Json(new { error = filteredError }, statusCode: 422);
+    var calendarData = JsonSerializer.Deserialize<CalendarData>(rawJson,
+        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
-    return Results.Ok(new ProcessResponse
-    {
-        Shifts      = match.Shifts,
-        ImageWidth  = result.ImageWidth,
-        ImageHeight = result.ImageHeight,
-    });
+    // Note: GLM-OCR does not populate ImageWidth/Height (overlay is Hybrid-pipeline only).
+    return Results.Ok(new ProcessResponse { Shifts = calendarData.FlattenToShiftData() });
 }).RequireAuthorization();
 
 // POST /confirm — stores employee-corrected shifts for future accuracy improvement
@@ -284,88 +352,6 @@ app.MapPost("/confirm", async (ConfirmRequest request, JobDbContext db, ILogger<
 
 app.Run();
 
-// ── Background job processor ──────────────────────────────────────────────────
-
-static async Task ProcessJobAsync(
-    string jobId,
-    IServiceProvider services,
-    string ollamaBaseUrl,
-    string ollamaModel,
-    string imageDir,
-    JobDbContext db,
-    bool debugMode = false)
-{
-    // Mark as processing
-    var job = await db.Jobs.FindAsync(jobId);
-    if (job is null) return;
-
-    job.Status = JobStatus.Processing;
-    await db.SaveChangesAsync();
-
-    try
-    {
-        if (debugMode)
-        {
-            await Task.Delay(TimeSpan.FromSeconds(5));
-            var mockPayload = BuildMockJobResultResponse(job.EmployeeName);
-            job.ResultJson  = JsonSerializer.Serialize(mockPayload);
-            job.Status      = JobStatus.Done;
-            job.CompletedAt = DateTime.UtcNow;
-            Console.WriteLine($"[DEBUG MODE] Job {jobId} — returning mock result.");
-            await db.SaveChangesAsync();
-            return;
-        }
-
-        var imageBytes = await File.ReadAllBytesAsync(job.ImagePath);
-        using var stream = new MemoryStream(imageBytes);
-
-        var hybrid = new HybridCalendarService(baseUrl: ollamaBaseUrl, model: ollamaModel);
-        var result = await hybrid.ProcessWithBoundsAsync(stream, job.EmployeeName);
-
-        if (result.IsError)
-        {
-            job.Status      = JobStatus.Error;
-            job.Error       = result.Error;
-            job.CompletedAt = DateTime.UtcNow;
-        }
-        else
-        {
-            var match = EmployeeNameMatcher.Match(result.Shifts, job.EmployeeName);
-            if (TryBuildEmployeeMatchError(job.EmployeeName, result.Shifts, match) is { } filteredError)
-            {
-                job.Status      = JobStatus.Error;
-                job.Error       = filteredError;
-                job.CompletedAt = DateTime.UtcNow;
-                await db.SaveChangesAsync();
-                return;
-            }
-
-            var resultPayload = new JobResultResponse
-            {
-                Shifts      = match.Shifts,
-                ImageWidth  = result.ImageWidth,
-                ImageHeight = result.ImageHeight,
-            };
-            job.ResultJson  = JsonSerializer.Serialize(resultPayload);
-            job.Status      = JobStatus.Done;
-            job.CompletedAt = DateTime.UtcNow;
-
-            Console.WriteLine($"[Job {jobId}] Done — result JSON:\n{job.ResultJson}");
-
-            // Keep source images so confirmed-correction rows can reference them
-            // for benchmark dataset export.
-        }
-    }
-    catch (Exception ex)
-    {
-        job.Status      = JobStatus.Error;
-        job.Error       = ex.Message;
-        job.CompletedAt = DateTime.UtcNow;
-    }
-
-    await db.SaveChangesAsync();
-}
-
 // ── Mock helpers (debug mode) ─────────────────────────────────────────────────
 
 static List<ShiftData> BuildMockShifts(string employeeName)
@@ -390,34 +376,7 @@ static ProcessResponse BuildMockProcessResponse(string employeeName) => new()
     ImageHeight = 773,
 };
 
-static JobResultResponse BuildMockJobResultResponse(string employeeName) => new()
-{
-    Shifts      = BuildMockShifts(employeeName),
-    ImageWidth  = 1080,
-    ImageHeight = 773,
-};
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-static string? TryBuildEmployeeMatchError(
-    string employeeName,
-    List<ShiftData> allShifts,
-    EmployeeNameMatcher.MatchResult match)
-{
-    if (string.IsNullOrWhiteSpace(employeeName) || match.Kind is EmployeeNameMatcher.MatchKind.ExactMatch
-        or EmployeeNameMatcher.MatchKind.FuzzyMatch
-        or EmployeeNameMatcher.MatchKind.NoShifts)
-        return null;
-
-    var distinctEmployees = EmployeeNameMatcher.DistinctEmployees(allShifts);
-
-    if (match.Kind == EmployeeNameMatcher.MatchKind.Ambiguous)
-        return $"Search Name '{employeeName}' matched multiple employees ({string.Join(", ", match.Candidates)}). Please be more specific and retry.";
-
-    return distinctEmployees.Count == 0
-        ? $"No employee names were returned by the parse for Search Name '{employeeName}'. Check Search Name and retry."
-        : $"Search Name '{employeeName}' did not match parse results. Returned employees: {string.Join(", ", distinctEmployees)}.";
-}
 
 static string EnsureApiKey(WebApplicationBuilder builder, int port)
 {

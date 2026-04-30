@@ -11,6 +11,7 @@
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.3" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="Moq" Version="4.20.72" />
     <PackageReference Include="xunit" Version="2.9.3" />
@@ -22,6 +23,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\CalendarParse.Api\CalendarParse.Api.csproj" />
     <ProjectReference Include="..\CalendarParse.Core\CalendarParse.Core.csproj" />
     <ProjectReference Include="..\CalendarParse.Parsing\CalendarParse.Parsing.csproj" />
   </ItemGroup>
