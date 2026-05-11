@@ -1,0 +1,32 @@
+# Source control
+.git
+.github
+.gstack
+.venv
+.vs
+.vscode
+
+# Build outputs
+**/bin/
+**/obj/
+**/*.user
+
+# Projects not needed in the API container
+CalendarParse/
+CalendarParse.Cli/
+CalendarParse.Tests/
+
+# Docs and local artifacts
+BenchmarkResults/
+maestro/
+scripts/
+*.md
+*.txt
+*.sql
+*.jsonl
+experiments.jsonl
+
+# Secrets (never bake into image)
+**/appsettings.Development.json
+**/*.pfx
+**/*.pem
